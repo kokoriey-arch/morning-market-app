@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "name": "morning-market-app",
+    "slug": "morning-market-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#07090E",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.kokoriey.morningmarketapp"
+    },
+    "androidNavigationBar": {
+      "backgroundColor": "#0B0F1A",
+      "barStyle": "light-content"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "newArchEnabled": false
+          }
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "3dc34748-3bce-4e0c-9b60-61a45691a340"
+      }
+    }
+  }
+}
