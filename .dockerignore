@@ -1,0 +1,12 @@
+node_modules
+.git
+.expo
+dist
+web-build
+src
+assets
+server/.env
+.env
+.env.*
+*.md
+.claude

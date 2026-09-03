@@ -1,0 +1,17 @@
+# Runs the market proxy on a cloud VM.
+# 1. Put the credentials and a long random MARKET_PROXY_TOKEN in .env
+# 2. docker compose up -d --build
+# TLS is terminated by a reverse proxy (Caddy/Nginx) in front, so the host
+# port is published on the loopback interface only.
+services:
+  market-proxy:
+    build: .
+    container_name: market-proxy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      # Inside the container the server must bind to all interfaces.
+      MARKET_PROXY_HOST: 0.0.0.0
+    env_file:
+      - .env

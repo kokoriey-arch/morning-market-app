@@ -16,6 +16,7 @@
 import { MarketItem } from '../../types/market';
 import { get_kospi_index } from '../kis/domesticStockService';
 import { getKOSPI200NightFutures } from './kospi200NightFuturesProvider';
+import { fetchTwelveDataPrices } from './twelveDataProvider';
 
 // This is an instrument identifier, not a credential. Leave it empty until the
 // exact Kiwoom night-futures code is confirmed for the selected contract.
@@ -46,12 +47,31 @@ export async function getKoreaMarketData(): Promise<KoreaMarketData> {
     getKOSPI200NightFutures(),
   ]);
 
-  const hasLiveKospi = Boolean(kospi && !kospi.isFallback && kospi.price > 0);
+  let hasLiveKospi = Boolean(kospi && !kospi.isFallback && kospi.price > 0);
+  let kospiPrice = hasLiveKospi ? kospi?.price ?? null : null;
+  let dataSourceLabel = hasLiveKospi ? '키움 REST API' : '캐시 데이터 (실시간 미연결)';
+
+  // Kiwoom unavailable (no credentials / network error): fall back to the
+  // proxy's Yahoo (^KS11) quote so the KOSPI open estimate stays realistic
+  // instead of showing a hardcoded placeholder level.
+  if (!hasLiveKospi) {
+    try {
+      const quotes = await fetchTwelveDataPrices(['kospi_composite']);
+      const quote = quotes.kospi_composite;
+      if (quote && quote.price > 0) {
+        kospiPrice = quote.price;
+        hasLiveKospi = true;
+        dataSourceLabel = 'Yahoo Finance (^KS11)';
+      }
+    } catch {
+      // keep fallback label
+    }
+  }
 
   return {
     nightFutures: null,
-    kospiCompositePrice: hasLiveKospi ? kospi?.price ?? null : null,
-    dataSourceLabel: hasLiveKospi ? '키움 REST API' : '캐시 데이터 (실시간 미연결)',
+    kospiCompositePrice: hasLiveKospi ? kospiPrice : null,
+    dataSourceLabel,
   };
 }
 

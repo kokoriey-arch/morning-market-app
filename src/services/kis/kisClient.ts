@@ -9,6 +9,8 @@ import { Platform } from 'react-native';
 
 const DEFAULT_PROXY_HOST = Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
 const PROXY_BASE_URL = process.env.EXPO_PUBLIC_MARKET_API_URL || `http://${DEFAULT_PROXY_HOST}:8787`;
+// Optional bearer token for a cloud-hosted proxy (see DEPLOYMENT.md).
+const PROXY_BEARER_TOKEN = process.env.EXPO_PUBLIC_MARKET_API_TOKEN || '';
 const TIMEOUT_MS = 8000;
 
 export function isKiwoomConfigured(): boolean {
@@ -29,7 +31,10 @@ export async function kiwoomRequest<T>(options: {
   try {
     const res = await fetch(`${PROXY_BASE_URL}/api/kiwoom`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(PROXY_BEARER_TOKEN ? { authorization: `Bearer ${PROXY_BEARER_TOKEN}` } : {}),
+      },
       body: JSON.stringify({ endpoint: options.endpoint, apiId: options.apiId, body: options.body || {} }),
       signal: controller.signal,
     });

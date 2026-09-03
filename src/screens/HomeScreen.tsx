@@ -65,7 +65,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </TouchableOpacity>
       </View>
 
-      {kospiFutures && (
+      {kospiFutures && kospiFutures.price > 0 ? (
         <View style={styles.kospiSectionWrap}>
           <MarketCard
             item={kospiFutures}
@@ -81,6 +81,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               low={kospiFutures.low}
             />
           </View>
+        </View>
+      ) : (
+        <View style={styles.futuresStubNotice}>
+          <View style={styles.futuresStubIconRow}>
+            <Ionicons name="moon-outline" size={18} color={Theme.colors.textDim} style={{ marginRight: 6 }} />
+            <Text style={styles.futuresStubTitle}>야간선물 시세 준비 중</Text>
+          </View>
+          <Text style={styles.futuresStubText}>
+            코스피 200 야간선물(KM200N) 실시간 시세는 승인된 공식 시세 제공처(키움 REST API) 연동 후 제공될
+            예정입니다. 연결되면 이 영역에 야간선물 시세와 상세 차트가 표시됩니다.
+          </Text>
         </View>
       )}
 
@@ -229,6 +240,29 @@ const styles = StyleSheet.create({
   },
   kospiSectionWrap: {
     marginBottom: 4,
+  },
+  futuresStubNotice: {
+    marginHorizontal: Theme.spacing.lg,
+    padding: Theme.spacing.md,
+    borderRadius: Theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: Theme.colors.cardBorder,
+    backgroundColor: Theme.colors.surface,
+  },
+  futuresStubIconRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  futuresStubTitle: {
+    fontSize: Theme.typography.sizes.sm,
+    fontWeight: 'bold',
+    color: Theme.colors.textSecondary,
+  },
+  futuresStubText: {
+    fontSize: 12,
+    color: Theme.colors.textDim,
+    lineHeight: 18,
   },
   bottomSpacer: {
     height: 60,

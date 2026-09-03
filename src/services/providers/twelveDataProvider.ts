@@ -12,6 +12,8 @@ import { Platform } from 'react-native';
 
 const DEFAULT_MARKET_API_HOST = Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
 const MARKET_API_URL = process.env.EXPO_PUBLIC_MARKET_API_URL ?? `http://${DEFAULT_MARKET_API_HOST}:8787`;
+// Optional bearer token for a cloud-hosted proxy (see DEPLOYMENT.md).
+const MARKET_API_BEARER_TOKEN = process.env.EXPO_PUBLIC_MARKET_API_TOKEN || '';
 const TIMEOUT_MS = 8000;
 const HISTORY_REQUEST_WINDOW_MS = 60_000;
 const MAX_HISTORY_REQUESTS_PER_WINDOW = 5;
@@ -42,6 +44,9 @@ export const TWELVE_DATA_SYMBOL_MAP: Record<string, TwelveDataSymbolConfig> = {
   fx_usdkrw:          { symbol: 'USD/KRW', type: 'forex' },
   macro_vix:          { symbol: 'VIX',     type: 'index' },
   macro_wti:          { symbol: 'WTI/USD', type: 'commodity' },
+  // KOSPI composite is served through the proxy's Yahoo fallback (^KS11);
+  // Twelve Data's free plan does not cover KRX indices.
+  kospi_composite:    { symbol: '^KS11',   type: 'index' },
   crypto_bitcoin:     { symbol: 'BTC/USD', type: 'crypto' },
   crypto_ethereum:    { symbol: 'ETH/USD', type: 'crypto' },
   crypto_solana:      { symbol: 'SOL/USD', type: 'crypto' },
@@ -62,7 +67,13 @@ export interface TwelveDataQuote {
   history: { time: string; value: number }[];
 }
 
-type PriceBatchResponse = Record<string, { price?: string; status?: string; code?: number; message?: string }>;
+type PriceBatchResponse = Record<string, { price?: string; previousClose?: string; status?: string; code?: number; message?: string }>;
+
+/** Live quote returned per item (previousClose is optional — Yahoo fallback supplies it). */
+export interface TwelveDataLiveQuote {
+  price: number;
+  previousClose?: number;
+}
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -84,8 +95,8 @@ async function fetchWithTimeout(url: string, timeoutMs: number, init?: RequestIn
 // ---------------------------------------------------------------------------
 // Batch price fetch — /price?symbol=A,B,C returns one JSON with all prices
 // ---------------------------------------------------------------------------
-async function fetchBatchPrices(itemIds: string[]): Promise<Record<string, number | null>> {
-  const result: Record<string, number | null> = {};
+async function fetchBatchPrices(itemIds: string[]): Promise<Record<string, TwelveDataLiveQuote | null>> {
+  const result: Record<string, TwelveDataLiveQuote | null> = {};
 
   if (!isApiKeyConfigured()) {
     for (const id of itemIds) result[id] = null;
@@ -104,7 +115,10 @@ async function fetchBatchPrices(itemIds: string[]): Promise<Record<string, numbe
   try {
     const res = await fetchWithTimeout(`${MARKET_API_URL}/api/twelve-data`, TIMEOUT_MS, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(MARKET_API_BEARER_TOKEN ? { authorization: `Bearer ${MARKET_API_BEARER_TOKEN}` } : {}),
+      },
       body: JSON.stringify({ operation: 'prices', itemIds: configs.map((x) => x.id) }),
     });
     if (!res.ok) {
@@ -112,20 +126,28 @@ async function fetchBatchPrices(itemIds: string[]): Promise<Record<string, numbe
       return result;
     }
 
-    const json = await res.json() as PriceBatchResponse | { price?: string; status?: string };
+    const json = await res.json() as PriceBatchResponse | { price?: string; previousClose?: string; status?: string };
 
     for (const { id, cfg } of configs) {
       try {
         // When only one symbol is requested the response is a flat object; for multiple it's nested.
         const entry = configs.length === 1
-          ? (json as { price?: string })
+          ? (json as { price?: string; previousClose?: string })
           : (json as PriceBatchResponse)[cfg.symbol];
 
         if (!entry || (entry as { status?: string }).status === 'error' || !(entry as { price?: string }).price) {
           result[id] = null;
         } else {
           const parsed = parseFloat((entry as { price: string }).price);
-          result[id] = isNaN(parsed) ? null : parsed;
+          if (isNaN(parsed) || parsed <= 0) {
+            result[id] = null;
+          } else {
+            const prevRaw = (entry as { previousClose?: string }).previousClose;
+            const prev = prevRaw !== undefined ? parseFloat(prevRaw) : NaN;
+            result[id] = isFinite(prev) && prev > 0
+              ? { price: parsed, previousClose: prev }
+              : { price: parsed };
+          }
         }
       } catch {
         result[id] = null;
@@ -164,7 +186,10 @@ async function fetchIntraday(
   try {
     const res = await fetchWithTimeout(`${MARKET_API_URL}/api/twelve-data`, TIMEOUT_MS, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(MARKET_API_BEARER_TOKEN ? { authorization: `Bearer ${MARKET_API_BEARER_TOKEN}` } : {}),
+      },
       body: JSON.stringify({ operation: 'history', itemId }),
     });
     if (!res.ok) return null;
@@ -204,7 +229,7 @@ async function fetchIntraday(
  */
 export async function fetchTwelveDataPrices(
   itemIds: string[],
-): Promise<Record<string, number | null>> {
+): Promise<Record<string, TwelveDataLiveQuote | null>> {
   return fetchBatchPrices(itemIds);
 }
 

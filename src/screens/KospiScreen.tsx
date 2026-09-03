@@ -93,25 +93,36 @@ export const KospiScreen: React.FC<KospiScreenProps> = ({
         </Text>
       </View>
 
-      {/* Main KOSPI Futures Card */}
-      {kospiFutures && (
-        <MarketCard
-          item={kospiFutures}
-          isFavorite={favorites.includes(kospiFutures.id)}
-          onToggleFavorite={onToggleFavorite}
-        />
-      )}
-
-      {/* Night Session Detail Chart */}
-      {kospiFutures && (
-        <View style={{ paddingHorizontal: Theme.spacing.lg }}>
-          <NightFuturesDetailChart
-            data={kospiFutures.history}
-            previousClose={kospiFutures.previousClose}
-            currentPrice={kospiFutures.price}
-            high={kospiFutures.high}
-            low={kospiFutures.low}
+      {/* Main KOSPI Futures Card (hidden while no live data — stub notice instead) */}
+      {kospiFutures && kospiFutures.price > 0 ? (
+        <>
+          <MarketCard
+            item={kospiFutures}
+            isFavorite={favorites.includes(kospiFutures.id)}
+            onToggleFavorite={onToggleFavorite}
           />
+
+          {/* Night Session Detail Chart */}
+          <View style={{ paddingHorizontal: Theme.spacing.lg }}>
+            <NightFuturesDetailChart
+              data={kospiFutures.history}
+              previousClose={kospiFutures.previousClose}
+              currentPrice={kospiFutures.price}
+              high={kospiFutures.high}
+              low={kospiFutures.low}
+            />
+          </View>
+        </>
+      ) : (
+        <View style={styles.futuresStubNotice}>
+          <View style={styles.futuresStubIconRow}>
+            <Ionicons name="moon-outline" size={18} color={Theme.colors.textDim} style={{ marginRight: 6 }} />
+            <Text style={styles.futuresStubTitle}>야간선물 시세 준비 중</Text>
+          </View>
+          <Text style={styles.futuresStubText}>
+            코스피 200 야간선물(KM200N) 실시간 시세는 승인된 공식 시세 제공처(키움 REST API) 연동 후 제공될
+            예정입니다. 연결되면 야간선물 카드, 상세 차트 및 수급 통계가 표시됩니다.
+          </Text>
         </View>
       )}
 
@@ -358,5 +369,29 @@ const styles = StyleSheet.create({
   },
   bottomSpacer: {
     height: 60,
+  },
+  futuresStubNotice: {
+    marginHorizontal: Theme.spacing.lg,
+    marginTop: Theme.spacing.sm,
+    padding: Theme.spacing.md,
+    borderRadius: Theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: Theme.colors.cardBorder,
+    backgroundColor: Theme.colors.surface,
+  },
+  futuresStubIconRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  futuresStubTitle: {
+    fontSize: Theme.typography.sizes.sm,
+    fontWeight: 'bold',
+    color: Theme.colors.textSecondary,
+  },
+  futuresStubText: {
+    fontSize: 12,
+    color: Theme.colors.textDim,
+    lineHeight: 18,
   },
 });

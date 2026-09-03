@@ -12,12 +12,14 @@ import {
   fetchTwelveDataPrices,
   fetchTwelveDataHistory,
   TWELVE_DATA_SYMBOL_MAP,
+  TwelveDataLiveQuote,
   isTwelveDataConfigured,
 } from './twelveDataProvider';
 import {
   getKoreaMarketData,
 } from './koreaMarketProvider';
 import { getUsMarketTag } from '../../utils/formatters';
+import { fetchFearGreedIndex, FearGreedResult } from './sentimentProvider';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -51,6 +53,7 @@ export function generateDynamicBriefing(
   items: MarketItem[],
   kospiCompositePrice?: number,
   updatedAt?: string,
+  sentiment?: FearGreedResult | null,
 ): MorningBriefing {
   const now = new Date();
   const days = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
@@ -79,24 +82,37 @@ export function generateDynamicBriefing(
 
   const baseKospi = (kospiCompositePrice && kospiCompositePrice > 0)
     ? kospiCompositePrice
-    : 2700;
+    : 0;
 
-  const expectedChangePercent = futuresChg * 0.9;
-  const expectedCenterPrice = baseKospi * (1 + expectedChangePercent / 100);
-  const deltaPoints = expectedCenterPrice - baseKospi;
-  const spread = Math.max(8, baseKospi * 0.0035);
-  const lowOpen = Math.round((expectedCenterPrice - spread) / 5) * 5;
-  const highOpen = Math.round((expectedCenterPrice + spread) / 5) * 5;
+  const hasFuturesData = Boolean(futures && futures.price > 0);
+  const expectedChangePercent = hasFuturesData ? futuresChg * 0.9 : 0;
+  let expectedKospiOpen: string;
+  let expectedKospiOpenRange: string;
+  let expectedKospiChange: string;
 
-  let openDirection = '보합권 출발';
-  if (futuresChg >= 0.5) openDirection = '상승 출발 (우상향 시도)';
-  else if (futuresChg > 0.1) openDirection = '소폭 상승 출발';
-  else if (futuresChg <= -0.5) openDirection = '하락 출발 (조정 압력)';
-  else if (futuresChg < -0.1) openDirection = '소폭 하락 출발';
+  if (baseKospi > 0) {
+    const expectedCenterPrice = baseKospi * (1 + expectedChangePercent / 100);
+    const deltaPoints = expectedCenterPrice - baseKospi;
+    const spread = Math.max(8, baseKospi * 0.0035);
+    const lowOpen = Math.round((expectedCenterPrice - spread) / 5) * 5;
+    const highOpen = Math.round((expectedCenterPrice + spread) / 5) * 5;
 
-  const expectedKospiOpen = `${(Math.round(expectedCenterPrice / 5) * 5).toLocaleString()} pt`;
-  const expectedKospiOpenRange = `예상 범위 ${lowOpen.toLocaleString()} ~ ${highOpen.toLocaleString()} pt · ${openDirection}`;
-  const expectedKospiChange = `${expectedChangePercent >= 0 ? '+' : ''}${expectedChangePercent.toFixed(2)}% (${deltaPoints >= 0 ? '+' : ''}${deltaPoints.toFixed(1)}pt)`;
+    let openDirection = '보합권 출발';
+    if (!hasFuturesData) openDirection = '야간선물 실시간 없음 · 전일 종가 기준';
+    else if (futuresChg >= 0.5) openDirection = '상승 출발 (우상향 시도)';
+    else if (futuresChg > 0.1) openDirection = '소폭 상승 출발';
+    else if (futuresChg <= -0.5) openDirection = '하락 출발 (조정 압력)';
+    else if (futuresChg < -0.1) openDirection = '소폭 하락 출발';
+
+    expectedKospiOpen = `${(Math.round(expectedCenterPrice / 5) * 5).toLocaleString()} pt`;
+    expectedKospiOpenRange = `예상 범위 ${lowOpen.toLocaleString()} ~ ${highOpen.toLocaleString()} pt · ${openDirection}`;
+    expectedKospiChange = `${expectedChangePercent >= 0 ? '+' : ''}${expectedChangePercent.toFixed(2)}% (${deltaPoints >= 0 ? '+' : ''}${deltaPoints.toFixed(1)}pt)`;
+  } else {
+    // No live KOSPI quote from any source — do not invent a price level.
+    expectedKospiOpen = '데이터 없음';
+    expectedKospiOpenRange = '코스피 종가 실시간 수신 실패 · 잠시 후 다시 갱신됩니다';
+    expectedKospiChange = '—';
+  }
 
   let marketTone: 'bullish' | 'bearish' | 'neutral' | 'volatile' = 'neutral';
   let marketToneBadge = '🔄 혼조세 속 관망 흐름';
@@ -116,7 +132,14 @@ export function generateDynamicBriefing(
     marketToneHeadline = `VIX 변동성(${vixVal.toFixed(1)}pt) 확대 속 혼조세`;
   }
 
-  const fearGreed = calculateFearAndGreed(vixVal);
+  // CNN Fear & Greed when available; otherwise the VIX-based approximation.
+  const fearGreed = sentiment
+    ? {
+        score: sentiment.score,
+        rating: sentiment.rating,
+        previousClose: sentiment.previousClose ?? Math.max(5, Math.min(95, sentiment.score - 2)),
+      }
+    : calculateFearAndGreed(vixVal);
 
   return {
     dateString,
@@ -183,12 +206,23 @@ export async function fetchAllMarketData(
     .filter((id) => id in TWELVE_DATA_SYMBOL_MAP);
 
   // ── 1. Twelve Data batch price fetch ──────────────────────────────────────
-  let priceMap: Record<string, number | null> = {};
+  let priceMap: Record<string, TwelveDataLiveQuote | null> = {};
   try {
     priceMap = await fetchTwelveDataPrices(twelveDataIds);
   } catch (e) {
     warnings.push(`Twelve Data batch fetch error: ${String(e)}`);
     for (const id of twelveDataIds) priceMap[id] = null;
+  }
+
+  // ── 1.5 Global sentiment (CNN Fear & Greed) ────────────────────────────────
+  let sentiment: FearGreedResult | null = null;
+  try {
+    sentiment = await fetchFearGreedIndex();
+  } catch {
+    sentiment = null;
+  }
+  if (!sentiment) {
+    warnings.push('CNN Fear & Greed unavailable — VIX-based estimate used');
   }
 
   // ── 2. Korea Market Provider ───────────────────────────────────────────────
@@ -227,7 +261,8 @@ export async function fetchAllMarketData(
       }
 
       // --- Twelve Data items ---
-      const livePrice = priceMap[item.id];
+      const liveQuote = priceMap[item.id] as TwelveDataLiveQuote | null | undefined;
+      const livePrice = liveQuote ? liveQuote.price : null;
       if (livePrice === undefined || livePrice === null || livePrice <= 0) {
         // Not supported or fetch failed — keep existing item
         if (item.id in TWELVE_DATA_SYMBOL_MAP) {
@@ -240,7 +275,12 @@ export async function fetchAllMarketData(
         return item;
       }
 
-      const previousClose = item.previousClose > 0 ? item.previousClose : livePrice;
+      // Prefer the previous close returned by the live source (Yahoo fallback
+      // provides it) over the hardcoded seed value, so change/% are accurate.
+      const livePrevious = liveQuote?.previousClose;
+      const previousClose = (livePrevious !== undefined && livePrevious > 0)
+        ? livePrevious
+        : (item.previousClose > 0 ? item.previousClose : livePrice);
       const change = livePrice - previousClose;
       const changePercent = previousClose > 0 ? (change / previousClose) * 100 : 0;
 
@@ -282,12 +322,12 @@ export async function fetchAllMarketData(
   const ss = String(now.getSeconds()).padStart(2, '0');
   const fetchedAt = now.toISOString();
 
-  const hasLiveData = isTwelveDataConfigured() && Object.values(priceMap).some((v) => v !== null && v > 0);
+  const hasLiveData = isTwelveDataConfigured() && Object.values(priceMap).some((v) => v !== null && v.price > 0);
   const updatedAtLabel = hasLiveData
     ? `마지막 업데이트 ${hh}:${mm}:${ss}`
     : `캐시 데이터 (${getUsMarketTag()} 기준)`;
 
-  const briefing = generateDynamicBriefing(updatedItems, kospiCompositePrice ?? undefined, updatedAtLabel);
+  const briefing = generateDynamicBriefing(updatedItems, kospiCompositePrice ?? undefined, updatedAtLabel, sentiment);
 
   return { items: updatedItems, briefing, fetchedAt, hasLiveData, warnings };
 }

@@ -41,3 +41,8 @@ server/.env
 # generated native folders
 /ios
 /android
+
+# local runtime artifacts
+*.log
+*_pid.txt
+_cb.json
