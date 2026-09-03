@@ -75,25 +75,31 @@ export const MarketCard: React.FC<MarketCardProps> = ({
       <View style={styles.centerRow}>
         <View style={styles.priceContainer}>
           <Text style={styles.priceText}>
-            {item.prefix ? item.prefix : ''}
-            {formatNumber(item.price, item.category === 'macro' && item.unit === '%' ? 3 : 2)}
-            <Text style={styles.unitText}> {item.unit}</Text>
+            {item.price > 0 ? (
+              <>
+                {item.prefix ? item.prefix : ''}
+                {formatNumber(item.price, item.category === 'macro' && item.unit === '%' ? 3 : 2)}
+                <Text style={styles.unitText}> {item.unit}</Text>
+              </>
+            ) : '데이터 없음'}
           </Text>
 
-          <View style={[styles.changePill, { backgroundColor: `${color}18` }]}>
-            <Ionicons
-              name={isUp ? 'arrow-up' : item.change < 0 ? 'arrow-down' : 'remove'}
-              size={12}
-              color={color}
-              style={{ marginRight: 2 }}
-            />
-            <Text style={[styles.changePercentText, { color }]}>
-              {formatPercent(item.changePercent)}
-            </Text>
-            <Text style={[styles.changeAmountText, { color }]}>
-              ({formatChange(item.change, false)})
-            </Text>
-          </View>
+          {item.price > 0 && (
+            <View style={[styles.changePill, { backgroundColor: `${color}18` }]}>
+              <Ionicons
+                name={isUp ? 'arrow-up' : item.change < 0 ? 'arrow-down' : 'remove'}
+                size={12}
+                color={color}
+                style={{ marginRight: 2 }}
+              />
+              <Text style={[styles.changePercentText, { color }]}>
+                {formatPercent(item.changePercent)}
+              </Text>
+              <Text style={[styles.changeAmountText, { color }]}>
+                ({formatChange(item.change, false)})
+              </Text>
+            </View>
+          )}
         </View>
 
         {showSparkline && item.history && item.history.length > 0 && (

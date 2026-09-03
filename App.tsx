@@ -1,13 +1,15 @@
-import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, Platform } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState, AppStateStatus, StyleSheet, View, Text, TouchableOpacity, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import * as Notifications from 'expo-notifications';
 
 import { Theme } from './src/theme/theme';
 import { MarketItem, MorningBriefing, UserPreferences } from './src/types/market';
 import { getUsMarketTag, INITIAL_MARKET_ITEMS, INITIAL_MORNING_BRIEFING, MarketService } from './src/services/marketData';
+import { syncMorningBriefingNotification } from './src/services/morningNotifications';
 
 import { Header } from './src/components/Header';
 import { SettingsModal } from './src/components/SettingsModal';
@@ -16,8 +18,23 @@ import { HomeScreen } from './src/screens/HomeScreen';
 import { KospiScreen } from './src/screens/KospiScreen';
 import { UsMarketScreen } from './src/screens/UsMarketScreen';
 import { MacroScreen } from './src/screens/MacroScreen';
+import { EconomicCalendarScreen } from './src/screens/EconomicCalendarScreen';
+import { AiAnalysisScreen } from './src/screens/AiAnalysisScreen';
+import { NotificationPopup, NotificationPopupData } from './src/components/NotificationPopup';
 
-type TabType = 'overview' | 'kospi' | 'us' | 'macro';
+type TabType = 'overview' | 'kospi' | 'us' | 'macro' | 'events' | 'ai';
+
+const AUTO_REFRESH_INTERVAL_MS = 60_000; // 60 seconds
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
 
 function MainApp() {
   const insets = useSafeAreaInsets();
@@ -33,57 +50,147 @@ function MainApp() {
   });
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
+  const [popup, setPopup] = useState<NotificationPopupData | null>(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
+  const [dataFetchError, setDataFetchError] = useState(false);
+
+  // Refs for interval + in-flight guard
+  const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isRefreshingRef = useRef(false);
+  // Keep a ref to the latest items so the auto-refresh closure always sees current data
+  const itemsRef = useRef<MarketItem[]>(INITIAL_MARKET_ITEMS);
 
   useEffect(() => {
-    loadInitialData();
+    itemsRef.current = items;
+  }, [items]);
+
+  // ── Refresh logic ──────────────────────────────────────────────────────────
+  const handleRefresh = useCallback(async () => {
+    if (isRefreshingRef.current) return; // prevent concurrent calls
+    isRefreshingRef.current = true;
+    setIsRefreshing(true);
+
+    try {
+      const result = await MarketService.refreshData(itemsRef.current);
+      setItems(result.items);
+      setBriefing(result.briefing);
+
+      if (result.fetchedAt) {
+        const d = new Date(result.fetchedAt);
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        const ss = String(d.getSeconds()).padStart(2, '0');
+        setLastUpdatedAt(`${hh}:${mm}:${ss}`);
+        setDataFetchError(false);
+      } else {
+        // fetchedAt null means provider fell back to cache
+        setDataFetchError(true);
+      }
+    } catch (e) {
+      console.warn('[App] handleRefresh error:', e);
+      setDataFetchError(true);
+    } finally {
+      isRefreshingRef.current = false;
+      setIsRefreshing(false);
+    }
   }, []);
+
+  // ── US market tag updater (keeps tag labels current every minute) ──────────
   useEffect(() => {
     const timer = setInterval(() => {
       const tag = getUsMarketTag();
-      setItems((currentItems) => currentItems.map((item) => (
-        item.category === 'us_index' ? { ...item, tag } : item
-      )));
+      setItems((currentItems) =>
+        currentItems.map((item) =>
+          item.category === 'us_index' ? { ...item, tag } : item,
+        ),
+      );
     }, 60_000);
-
     return () => clearInterval(timer);
   }, []);
 
+  // ── Auto-refresh interval (60 s) ───────────────────────────────────────────
+  const startInterval = useCallback(() => {
+    if (refreshIntervalRef.current) return; // already running
+    refreshIntervalRef.current = setInterval(() => {
+      handleRefresh();
+    }, AUTO_REFRESH_INTERVAL_MS);
+  }, [handleRefresh]);
 
-  const loadInitialData = async () => {
-    const [prefs, cachedItems, cachedBriefing] = await Promise.all([
-      MarketService.getUserPreferences(),
-      MarketService.getMarketItems(),
-      MarketService.getMorningBriefing(),
-    ]);
-    setPreferences(prefs);
-    setItems(cachedItems);
-    setBriefing(cachedBriefing);
-    if (prefs.defaultTab) {
-      setCurrentTab(prefs.defaultTab);
+  const stopInterval = useCallback(() => {
+    if (refreshIntervalRef.current) {
+      clearInterval(refreshIntervalRef.current);
+      refreshIntervalRef.current = null;
     }
-    // Fetch live market data on launch
-    handleRefresh();
-  };
+  }, []);
 
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    try {
-      const result = await MarketService.refreshData();
-      setItems(result.items);
-      setBriefing(result.briefing);
-    } catch (e) {
-      console.warn('Refresh error:', e);
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
+  // ── AppState: pause polling in background, resume + immediate refresh in foreground ──
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'active') {
+        // Back to foreground: refresh immediately then restart interval
+        handleRefresh();
+        startInterval();
+      } else {
+        // Background / inactive: pause polling
+        stopInterval();
+      }
+    });
+    return () => subscription.remove();
+  }, [handleRefresh, startInterval, stopInterval]);
 
+  // ── Initial load ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    const init = async () => {
+      // 1. Load preferences and cache simultaneously
+      const [prefs, cachedItems, cachedBriefing] = await Promise.all([
+        MarketService.getUserPreferences(),
+        MarketService.getMarketItems(),
+        MarketService.getMorningBriefing(),
+      ]);
+
+      setPreferences(prefs);
+      setItems(cachedItems);
+      setBriefing(cachedBriefing);
+      syncMorningBriefingNotification(prefs).catch(() => {});
+
+      if (prefs.defaultTab) setCurrentTab(prefs.defaultTab);
+
+      // 2. Fetch live data in background
+      await handleRefresh();
+
+      // 3. Start polling
+      startInterval();
+    };
+
+    init();
+
+    // Cleanup on unmount
+    return () => stopInterval();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── In-app notification popup + vibration ────────────────────────────────
+  useEffect(() => {
+    const receivedSubscription = Notifications.addNotificationReceivedListener((notification) => {
+      if (preferences.enableHaptics) {
+        try {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } catch {}
+      }
+      setPopup({
+        title: notification.request.content.title ?? '알림',
+        body: notification.request.content.body ?? '',
+      });
+    });
+    return () => receivedSubscription.remove();
+  }, [preferences.enableHaptics]);
+
+  // ── Event handlers ────────────────────────────────────────────────────────
   const handleToggleFavorite = async (id: string) => {
     const currentFavs = preferences.favorites;
     const nextFavs = currentFavs.includes(id)
       ? currentFavs.filter((favId) => favId !== id)
       : [...currentFavs, id];
-
     const newPrefs = { ...preferences, favorites: nextFavs };
     setPreferences(newPrefs);
     await MarketService.saveUserPreferences(newPrefs);
@@ -91,28 +198,25 @@ function MainApp() {
 
   const handleTabPress = (tab: TabType) => {
     if (preferences.enableHaptics) {
-      try {
-        Haptics.selectionAsync();
-      } catch {}
+      try { Haptics.selectionAsync(); } catch {}
     }
     setCurrentTab(tab);
   };
 
   const handleGoBack = () => {
     if (preferences.enableHaptics) {
-      try {
-        Haptics.selectionAsync();
-      } catch {}
+      try { Haptics.selectionAsync(); } catch {}
     }
     setCurrentTab('overview');
   };
 
   const handleUpdatePreferences = async (newPrefs: UserPreferences) => {
+    await syncMorningBriefingNotification(newPrefs);
     setPreferences(newPrefs);
     await MarketService.saveUserPreferences(newPrefs);
   };
 
-  // Dynamic bottom padding ensuring full clearance over Galaxy navigation bar (Home key/Gesture bar)
+  // ── Layout ─────────────────────────────────────────────────────────────────
   const bottomInsetPadding = Math.max(insets.bottom + 8, Platform.OS === 'android' ? 32 : 24);
   const topInsetPadding = Math.max(insets.top, Platform.OS === 'android' ? 12 : 0);
 
@@ -125,6 +229,8 @@ function MainApp() {
         onRefresh={handleRefresh}
         onOpenSettings={() => setSettingsVisible(true)}
         isRefreshing={isRefreshing}
+        lastUpdatedAt={lastUpdatedAt}
+        dataFetchError={dataFetchError}
       />
 
       {/* Screen Content based on Active Tab */}
@@ -176,9 +282,17 @@ function MainApp() {
             onGoBack={handleGoBack}
           />
         )}
+
+        {currentTab === 'events' && (
+          <EconomicCalendarScreen onGoBack={handleGoBack} />
+        )}
+
+        {currentTab === 'ai' && (
+          <AiAnalysisScreen onGoBack={handleGoBack} />
+        )}
       </View>
 
-      {/* Bottom Tab Bar Navigation with Safe Margin */}
+      {/* Bottom Tab Bar Navigation */}
       <View style={[styles.tabBar, { paddingBottom: bottomInsetPadding }]}>
         <TouchableOpacity
           style={[styles.tabItem, currentTab === 'overview' && styles.tabItemActive]}
@@ -187,16 +301,26 @@ function MainApp() {
         >
           <Ionicons
             name={currentTab === 'overview' ? 'sunny' : 'sunny-outline'}
-            size={22}
+            size={20}
             color={currentTab === 'overview' ? Theme.colors.activeTab : Theme.colors.inactiveTab}
           />
-          <Text
-            style={[
-              styles.tabLabel,
-              currentTab === 'overview' && styles.tabLabelActive,
-            ]}
-          >
+          <Text style={[styles.tabLabel, currentTab === 'overview' && styles.tabLabelActive]}>
             모닝 브리핑
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.tabItem, currentTab === 'ai' && styles.tabItemActive]}
+          onPress={() => handleTabPress('ai')}
+          activeOpacity={0.8}
+        >
+          <Ionicons
+            name={currentTab === 'ai' ? 'sparkles' : 'sparkles-outline'}
+            size={20}
+            color={currentTab === 'ai' ? Theme.colors.primary : Theme.colors.inactiveTab}
+          />
+          <Text style={[styles.tabLabel, currentTab === 'ai' && styles.tabLabelActive, { color: currentTab === 'ai' ? Theme.colors.primary : Theme.colors.inactiveTab }]}>
+            AI 수급분석
           </Text>
         </TouchableOpacity>
 
@@ -207,15 +331,10 @@ function MainApp() {
         >
           <Ionicons
             name={currentTab === 'kospi' ? 'moon' : 'moon-outline'}
-            size={22}
+            size={20}
             color={currentTab === 'kospi' ? Theme.colors.activeTab : Theme.colors.inactiveTab}
           />
-          <Text
-            style={[
-              styles.tabLabel,
-              currentTab === 'kospi' && styles.tabLabelActive,
-            ]}
-          >
+          <Text style={[styles.tabLabel, currentTab === 'kospi' && styles.tabLabelActive]}>
             코스피 야간
           </Text>
         </TouchableOpacity>
@@ -227,15 +346,10 @@ function MainApp() {
         >
           <Ionicons
             name={currentTab === 'us' ? 'trending-up' : 'trending-up-outline'}
-            size={22}
+            size={20}
             color={currentTab === 'us' ? Theme.colors.activeTab : Theme.colors.inactiveTab}
           />
-          <Text
-            style={[
-              styles.tabLabel,
-              currentTab === 'us' && styles.tabLabelActive,
-            ]}
-          >
+          <Text style={[styles.tabLabel, currentTab === 'us' && styles.tabLabelActive]}>
             미국 증시
           </Text>
         </TouchableOpacity>
@@ -247,16 +361,26 @@ function MainApp() {
         >
           <Ionicons
             name={currentTab === 'macro' ? 'globe' : 'globe-outline'}
-            size={22}
+            size={20}
             color={currentTab === 'macro' ? Theme.colors.activeTab : Theme.colors.inactiveTab}
           />
-          <Text
-            style={[
-              styles.tabLabel,
-              currentTab === 'macro' && styles.tabLabelActive,
-            ]}
-          >
+          <Text style={[styles.tabLabel, currentTab === 'macro' && styles.tabLabelActive]}>
             환율·매크로
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.tabItem, currentTab === 'events' && styles.tabItemActive]}
+          onPress={() => handleTabPress('events')}
+          activeOpacity={0.8}
+        >
+          <Ionicons
+            name={currentTab === 'events' ? 'calendar' : 'calendar-outline'}
+            size={20}
+            color={currentTab === 'events' ? Theme.colors.activeTab : Theme.colors.inactiveTab}
+          />
+          <Text style={[styles.tabLabel, currentTab === 'events' && styles.tabLabelActive]}>
+            경제 일정
           </Text>
         </TouchableOpacity>
       </View>
@@ -268,6 +392,9 @@ function MainApp() {
         preferences={preferences}
         onUpdatePreferences={handleUpdatePreferences}
       />
+
+      {/* In-app notification popup */}
+      <NotificationPopup popup={popup} onDismiss={() => setPopup(null)} />
     </View>
   );
 }

@@ -1,77 +1,53 @@
+/**
+ * marketData.ts
+ *
+ * Provides:
+ *  - INITIAL_MARKET_ITEMS  (static seed data / fallback)
+ *  - INITIAL_MORNING_BRIEFING
+ *  - getUsMarketTag()
+ *  - MarketService  (cache + user prefs + refresh via marketProvider)
+ *
+ * Yahoo Finance has been REMOVED. Data is now fetched via:
+ *   src/services/providers/marketProvider.ts  (Twelve Data + Korea Market)
+ */
+
 import { MarketItem, MorningBriefing, UserPreferences } from '../types/market';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getCurrentMorningDateString } from '../utils/formatters';
+import { getCurrentMorningDateString, getUsMarketTag } from '../utils/formatters';
+import { fetchAllMarketData } from './providers/marketProvider';
+
+export { getUsMarketTag };
 
 const PREFS_STORAGE_KEY = '@morning_market_user_prefs_v1';
+const CACHED_ITEMS_KEY = '@morning_market_cached_items_v5';
+const CACHED_BRIEFING_KEY = '@morning_market_cached_briefing_v5';
 
-export function getUsMarketTag(): string {
-  const now = new Date();
-  const day = now.getDay(); // 0: Sun, 1: Mon, ..., 6: Sat
-  const kstHour = now.getHours();
-  const kstMin = now.getMinutes();
-
-  // Regular US trading hours (22:30 ~ 05:00 KST on weekdays: Mon night ~ Sat early morning)
-  const isTrading =
-    (day >= 1 && day <= 5 && (kstHour > 22 || (kstHour === 22 && kstMin >= 30))) ||
-    (day >= 2 && day <= 6 && (kstHour < 5 || (kstHour === 5 && kstMin === 0)));
-
-  if (isTrading) {
-    return '美 정규장 실시간 진행';
-  }
-
-  // Calculate the latest closed US session date
-  const usDate = new Date(now);
-  if (day === 0) {
-    // Sunday -> latest closed was Friday (2 days ago)
-    usDate.setDate(now.getDate() - 2);
-  } else if (day === 6) {
-    // Saturday -> latest closed was Friday (1 day ago or early morning)
-    usDate.setDate(now.getDate() - 1);
-  } else if (day === 1 && kstHour < 22) {
-    // Monday daytime before 22:30 -> latest closed was Friday (3 days ago)
-    usDate.setDate(now.getDate() - 3);
-  } else if (kstHour < 5) {
-    // Early morning before 05:00
-    usDate.setDate(now.getDate() - 1);
-  } else {
-    // Weekday daytime (05:00 ~ 22:29)
-    usDate.setDate(now.getDate() - 1);
-  }
-
-  const month = usDate.getMonth() + 1;
-  const date = usDate.getDate();
-  return `美 증시 마감 (${month}/${date})`;
-}
-
+// ---------------------------------------------------------------------------
+// Static seed data
+// ---------------------------------------------------------------------------
 export const INITIAL_MARKET_ITEMS: MarketItem[] = [
-  // 1. KOSPI Overnight Futures
+  // 1. KOSPI 200 야간선물
+  //    NOTE: Real-time data requires Korea Investment Securities / Kiwoom API.
+  //    This seed uses cached values. The tag explicitly states the data source.
   {
     id: 'kospi_night_futures',
     symbol: 'KM200N',
     name: 'KOSPI 200 Night Futures',
     koreanName: '코스피 200 야간선물',
     category: 'kospi',
-    price: 878.20,
-    change: 6.95,
-    changePercent: 0.80,
-    open: 871.50,
-    high: 879.80,
-    low: 871.00,
-    previousClose: 871.25,
-    volume: '64,820 계약',
+    price: 0,
+    change: 0,
+    changePercent: 0,
+    open: 0,
+    high: 0,
+    low: 0,
+    previousClose: 0,
+    volume: '',
     unit: 'pt',
     isNightFutures: true,
-    tag: '새벽 마감 (06:00)',
-    description: '전일 정규장 종가 대비 +0.80% 상승 마감. 오늘 코스피 지수 +0.7~1.0% 상승 출발 견인 예상.',
-    history: [
-      { time: '18:00', value: 871.25 },
-      { time: '20:00', value: 872.80 },
-      { time: '22:30', value: 874.50 },
-      { time: '00:00', value: 876.00 },
-      { time: '02:30', value: 879.80 },
-      { time: '04:30', value: 878.90 },
-      { time: '06:00', value: 878.20 },
-    ],
+    tag: '캐시 데이터 (실시간 미연결)',
+    description: '코스피 200 야간선물 (CME 연계 KRX). 실시간 연동을 위해서는 한국투자증권 또는 키움 API 키가 필요합니다.',
+    history: [],
   },
 
   // 2. US Major Indices
@@ -379,12 +355,12 @@ export const INITIAL_MARKET_ITEMS: MarketItem[] = [
     ],
   },
 
-  // 4. Macro Indicators (환율, 10년/30년 금리, 유가, VIX)
+  // 4. Macro Indicators
   {
     id: 'fx_usdkrw',
     symbol: 'USDKRW',
-    name: 'USD / KRW Night FX',
-    koreanName: '원/달러 환율 (야간 NDF)',
+    name: 'USD / KRW',
+    koreanName: '원/달러 환율',
     category: 'macro',
     price: 1416.61,
     change: -2.00,
@@ -395,7 +371,7 @@ export const INITIAL_MARKET_ITEMS: MarketItem[] = [
     previousClose: 1418.61,
     unit: '원',
     tag: '환율 박스권 등락',
-    description: '달러화 지수 및 외국인 수급 변동 속 야간 역외 NDF 환율 소폭 하락.',
+    description: '달러화 지수 및 외국인 수급 변동 속 환율 소폭 하락.',
     history: [
       { time: '18:00', value: 1418.6 },
       { time: '22:00', value: 1419.2 },
@@ -501,12 +477,17 @@ export const INITIAL_MARKET_ITEMS: MarketItem[] = [
       { time: '06:00', value: 82.16 },
     ],
   },
-  { id: 'crypto_bitcoin', symbol: 'BTC-USD', name: 'Bitcoin', koreanName: '비트코인', category: 'crypto', price: 0, change: 0, changePercent: 0, open: 0, high: 0, low: 0, previousClose: 0, unit: '$', prefix: '$', tag: '24시간 실시간', description: '대표 디지털 자산의 24시간 가격 추세입니다.', history: [{ time: '00:00', value: 1 }, { time: '06:00', value: 1 }, { time: '12:00', value: 1 }] },
-  { id: 'crypto_ethereum', symbol: 'ETH-USD', name: 'Ethereum', koreanName: '이더리움', category: 'crypto', price: 0, change: 0, changePercent: 0, open: 0, high: 0, low: 0, previousClose: 0, unit: '$', prefix: '$', tag: '24시간 실시간', description: '스마트 컨트랙트 생태계 대표 자산의 24시간 가격 추세입니다.', history: [{ time: '00:00', value: 1 }, { time: '06:00', value: 1 }, { time: '12:00', value: 1 }] },
-  { id: 'crypto_solana', symbol: 'SOL-USD', name: 'Solana', koreanName: '솔라나', category: 'crypto', price: 0, change: 0, changePercent: 0, open: 0, high: 0, low: 0, previousClose: 0, unit: '$', prefix: '$', tag: '24시간 실시간', description: '고성능 블록체인 자산의 24시간 가격 추세입니다.', history: [{ time: '00:00', value: 1 }, { time: '06:00', value: 1 }, { time: '12:00', value: 1 }] },
-  { id: 'crypto_xrp', symbol: 'XRP-USD', name: 'XRP', koreanName: '리플', category: 'crypto', price: 0, change: 0, changePercent: 0, open: 0, high: 0, low: 0, previousClose: 0, unit: '$', prefix: '$', tag: '24시간 실시간', description: '송금·결제 네트워크 기반 자산의 24시간 가격 추세입니다.', history: [{ time: '00:00', value: 1 }, { time: '06:00', value: 1 }, { time: '12:00', value: 1 }] },
+
+  // 5. Crypto
+  { id: 'crypto_bitcoin',  symbol: 'BTC-USD', name: 'Bitcoin',  koreanName: '비트코인', category: 'crypto', price: 0, change: 0, changePercent: 0, open: 0, high: 0, low: 0, previousClose: 0, unit: '$', prefix: '$', tag: '24시간 실시간', description: '대표 디지털 자산의 24시간 가격 추세입니다.', history: [{ time: '00:00', value: 1 }, { time: '06:00', value: 1 }, { time: '12:00', value: 1 }] },
+  { id: 'crypto_ethereum', symbol: 'ETH-USD', name: 'Ethereum', koreanName: '이더리움',  category: 'crypto', price: 0, change: 0, changePercent: 0, open: 0, high: 0, low: 0, previousClose: 0, unit: '$', prefix: '$', tag: '24시간 실시간', description: '스마트 컨트랙트 생태계 대표 자산의 24시간 가격 추세입니다.', history: [{ time: '00:00', value: 1 }, { time: '06:00', value: 1 }, { time: '12:00', value: 1 }] },
+  { id: 'crypto_solana',   symbol: 'SOL-USD', name: 'Solana',   koreanName: '솔라나',    category: 'crypto', price: 0, change: 0, changePercent: 0, open: 0, high: 0, low: 0, previousClose: 0, unit: '$', prefix: '$', tag: '24시간 실시간', description: '고성능 블록체인 자산의 24시간 가격 추세입니다.', history: [{ time: '00:00', value: 1 }, { time: '06:00', value: 1 }, { time: '12:00', value: 1 }] },
+  { id: 'crypto_xrp',      symbol: 'XRP-USD', name: 'XRP',      koreanName: '리플',      category: 'crypto', price: 0, change: 0, changePercent: 0, open: 0, high: 0, low: 0, previousClose: 0, unit: '$', prefix: '$', tag: '24시간 실시간', description: '송금·결제 네트워크 기반 자산의 24시간 가격 추세입니다.', history: [{ time: '00:00', value: 1 }, { time: '06:00', value: 1 }, { time: '12:00', value: 1 }] },
 ];
 
+// ---------------------------------------------------------------------------
+// Initial briefing (static seed)
+// ---------------------------------------------------------------------------
 export const INITIAL_MORNING_BRIEFING: MorningBriefing = {
   dateString: getCurrentMorningDateString().dateString + ` (${getCurrentMorningDateString().dayString[0]})`,
   dayOfWeek: getCurrentMorningDateString().dayString,
@@ -519,289 +500,55 @@ export const INITIAL_MORNING_BRIEFING: MorningBriefing = {
   expectedKospiChange: '+0.72% (+19.5pt)',
   confidenceRate: 85,
   summaryBullets: [
-    '🌙 코스피 200 야간선물 878.20pt(+0.80%) 상승 마감 · 정규장 상승 출발 견인 예상',
-    '📊 미 나스닥·S&P 500 및 필라델피아 반도체 실시간 시황 연동 중',
+    '🌙 코스피 200 야간선물 실시간 데이터 없음',
+    '📊 미 나스닥·S&P 500 및 필라델피아 반도체 시황 연동 중',
     '💵 원/달러 환율 1,416.61원, 미 국채 10년 4.66% / 30년 5.19%',
   ],
   keyDrivers: [
-    {
-      title: '코스피 시초가 상승 모멘텀',
-      impact: 'positive',
-      desc: '야간선물 +0.80% 상승으로 정규장 갭상승 출발 우세',
-    },
-    {
-      title: '미 증시 및 글로벌 반도체',
-      impact: 'positive',
-      desc: '엔비디아 및 주요 빅테크 실시간 견조한 흐름 유지',
-    },
-    {
-      title: '환율 및 10년/30년 금리',
-      impact: 'neutral',
-      desc: '원/달러 환율 1,416원대 및 미 30년물 국채금리 5.18%대 등락',
-    },
+    { title: '코스피 시초가 상승 모멘텀', impact: 'positive', desc: '야간선물 +0.80% 상승으로 정규장 갭상승 출발 우세' },
+    { title: '미 증시 및 글로벌 반도체',  impact: 'positive', desc: '엔비디아 및 주요 빅테크 견조한 흐름 유지' },
+    { title: '환율 및 10년/30년 금리',    impact: 'neutral',  desc: '원/달러 환율 1,416원대 및 미 30년물 국채금리 5.18%대 등락' },
   ],
   nightSessionStats: {
-    nightClose: 878.20,
-    nightChange: 6.95,
-    nightChangePercent: 0.80,
-    volumeContracts: '64,820 계약 (평균 대비 118%)',
-    foreignBuyingNet: '+2,480 계약 순매수',
+    nightClose: 0,
+    nightChange: 0,
+    nightChangePercent: 0,
+    volumeContracts: '실시간 데이터 없음',
+    foreignBuyingNet: '실시간 데이터 없음',
     tradingHours: '전일 18:00 ~ 금일 06:00 (CME 연계 KRX)',
   },
-  fearAndGreedIndex: {
-    score: 62,
-    rating: 'Greed (탐욕 - 매수 심리 우세)',
-    previousClose: 58,
-  },
+  fearAndGreedIndex: { score: 62, rating: 'Greed (탐욕 - 매수 심리 우세)', previousClose: 58 },
 };
 
-const CACHED_ITEMS_KEY = '@morning_market_cached_items_v4';
-const CACHED_BRIEFING_KEY = '@morning_market_cached_briefing_v4';
-
-const YAHOO_SYMBOL_MAP: Record<string, string> = {
-  kospi_night_futures: '^KS200',
-  nasdaq_comp: '^IXIC',
-  sp500: '^GSPC',
-  phil_semiconductor: '^SOX',
-  dow_jones: '^DJI',
-  tech_nvda: 'NVDA',
-  tech_aapl: 'AAPL',
-  tech_msft: 'MSFT',
-  tech_googl: 'GOOGL',
-  tech_amzn: 'AMZN',
-  tech_tsla: 'TSLA',
-  tech_tsm: 'TSM',
-  fx_usdkrw: 'KRW=X',
-  macro_us10y: '^TNX',
-  macro_us30y: '^TYX',
-  macro_vix: '^VIX',
-  macro_wti: 'CL=F',
-  crypto_bitcoin: 'BTC-USD',
-  crypto_ethereum: 'ETH-USD',
-  crypto_solana: 'SOL-USD',
-  crypto_xrp: 'XRP-USD',
-};
-
-async function fetchSingleTicker(symbol: string): Promise<{
-  price: number;
-  previousClose: number;
-  open: number;
-  high: number;
-  low: number;
-  history: { time: string; value: number }[];
-} | null> {
-  try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=30m&range=1d`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000);
-
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)',
-        'Accept': 'application/json',
-      },
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-
-    if (!res.ok) return null;
-    const json = await res.json();
-    const result = json?.chart?.result?.[0];
-    if (!result || !result.meta) return null;
-
-    const meta = result.meta;
-    const price = Number(meta.regularMarketPrice ?? 0);
-    const previousClose = Number(meta.chartPreviousClose ?? meta.previousClose ?? price);
-    const open = Number(meta.regularMarketDayOpen ?? previousClose);
-    const high = Number(meta.regularMarketDayHigh ?? Math.max(price, open));
-    const low = Number(meta.regularMarketDayLow ?? Math.min(price, open));
-
-    const timestamps: number[] = result.timestamp || [];
-    const closes: (number | null)[] = result.indicators?.quote?.[0]?.close || [];
-
-    const history = timestamps
-      .map((t, idx) => {
-        const val = closes[idx];
-        if (val == null || val <= 0) return null;
-        const d = new Date(t * 1000);
-        const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-        return { time, value: Number(val.toFixed(2)) };
-      })
-      .filter((h): h is { time: string; value: number } => h !== null);
-
-    return { price, previousClose, open, high, low, history };
-  } catch (e) {
-    return null;
-  }
-}
-
-function calculateFearAndGreedFromVix(vixPrice: number): { score: number; rating: string; previousClose: number } {
-  let score = Math.round(100 - (vixPrice - 10) * 3.2);
-  score = Math.max(5, Math.min(95, score));
-
-  let rating = 'Neutral (중립)';
-  if (score >= 75) rating = 'Extreme Greed (극단적 탐욕)';
-  else if (score >= 60) rating = 'Greed (탐욕 - 매수 우세)';
-  else if (score <= 25) rating = 'Extreme Fear (극단적 공포)';
-  else if (score <= 40) rating = 'Fear (공포 - 매도 우세)';
-
-  return {
-    score,
-    rating,
-    previousClose: Math.max(5, Math.min(95, score - 2)),
-  };
-}
-
-function generateDynamicBriefing(items: MarketItem[], kospiCompositePrice?: number): MorningBriefing {
-  const now = new Date();
-  const days = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
-  const month = now.getMonth() + 1;
-  const date = now.getDate();
-  const dateString = `${month}월 ${date}일 (${days[now.getDay()][0]})`;
-  const dayOfWeek = days[now.getDay()];
-  const updatedAt = `실시간 라이브 업데이트 (${now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })})`;
-
-  const nasdaq = items.find((i) => i.id === 'nasdaq_comp');
-  const sox = items.find((i) => i.id === 'phil_semiconductor');
-  const futures = items.find((i) => i.id === 'kospi_night_futures');
-  const usdkrw = items.find((i) => i.id === 'fx_usdkrw');
-  const us10y = items.find((i) => i.id === 'macro_us10y');
-  const us30y = items.find((i) => i.id === 'macro_us30y');
-  const vix = items.find((i) => i.id === 'macro_vix');
-  const wti = items.find((i) => i.id === 'macro_wti');
-
-  const nasdaqChg = nasdaq?.changePercent ?? 0;
-  const soxChg = sox?.changePercent ?? 0;
-  const futuresChg = futures?.changePercent ?? 0;
-  const usdkrwVal = usdkrw?.price ?? 1416;
-  const us10yVal = us10y?.price ?? 4.66;
-  const us30yVal = us30y?.price ?? 5.18;
-  const vixVal = vix?.price ?? 14.5;
-  const wtiVal = wti?.price ?? 82.0;
-
-  // Calculate estimated KOSPI open range with approximate numeric estimation + direction
-  const baseKospi = (kospiCompositePrice && kospiCompositePrice > 0)
-    ? kospiCompositePrice
-    : (futures?.price && futures.price > 500 ? futures.price * 7.85 : 2700);
-
-  const expectedChangePercent = futuresChg * 0.9;
-  const expectedCenterPrice = baseKospi * (1 + expectedChangePercent / 100);
-  const deltaPoints = expectedCenterPrice - baseKospi;
-  const spread = Math.max(8, baseKospi * 0.0035);
-  const lowOpen = Math.round((expectedCenterPrice - spread) / 5) * 5;
-  const highOpen = Math.round((expectedCenterPrice + spread) / 5) * 5;
-
-  let openDirection = '보합권 출발';
-  if (futuresChg >= 0.5) openDirection = '상승 출발 (우상향 시도)';
-  else if (futuresChg > 0.1) openDirection = '소폭 상승 출발';
-  else if (futuresChg <= -0.5) openDirection = '하락 출발 (조정 압력)';
-  else if (futuresChg < -0.1) openDirection = '소폭 하락 출발';
-
-  const expectedKospiOpen = `${(Math.round(expectedCenterPrice / 5) * 5).toLocaleString()} pt`;
-  const expectedKospiOpenRange = `예상 범위 ${lowOpen.toLocaleString()} ~ ${highOpen.toLocaleString()} pt · ${openDirection}`;
-  const expectedKospiChange = `${expectedChangePercent >= 0 ? '+' : ''}${expectedChangePercent.toFixed(2)}% (${deltaPoints >= 0 ? '+' : ''}${deltaPoints.toFixed(1)}pt)`;
-
-  let marketTone: 'bullish' | 'bearish' | 'neutral' | 'volatile' = 'neutral';
-  let marketToneBadge = '🔄 혼조세 속 관망 흐름';
-  let marketToneHeadline = '미 증시 주요 지수 및 야간 선물 실시간 시세 반영 중';
-
-  if (futuresChg > 0.5 || (nasdaqChg > 0.5 && soxChg > 0.5)) {
-    marketTone = 'bullish';
-    marketToneBadge = '🚀 강세 기조 지속';
-    marketToneHeadline = `나스닥(${nasdaqChg > 0 ? '+' : ''}${nasdaqChg.toFixed(2)}%) 및 반도체 호조로 국내 증시 상승 출발 기대`;
-  } else if (futuresChg < -0.5 || (nasdaqChg < -0.5 && soxChg < -0.5)) {
-    marketTone = 'bearish';
-    marketToneBadge = '⚠️ 조정 및 차익실현 경계';
-    marketToneHeadline = `미 기술주 조정(${nasdaqChg.toFixed(2)}%) 영향으로 국내 증시 단기 변동성 유의`;
-  } else if (vixVal > 22) {
-    marketTone = 'volatile';
-    marketToneBadge = '⚡ 변동성 확대 장세';
-    marketToneHeadline = `VIX 변동성(${vixVal.toFixed(1)}pt) 확대 속 혼조세`;
-  }
-
-  const fearGreed = calculateFearAndGreedFromVix(vixVal);
-
-  return {
-    dateString,
-    dayOfWeek,
-    updatedAt,
-    marketTone,
-    marketToneBadge,
-    marketToneHeadline,
-    expectedKospiOpen,
-    expectedKospiChange,
-    expectedKospiOpenRange,
-    confidenceRate: 85,
-    summaryBullets: [
-      `🌙 코스피 200 야간선물: ${futures?.price ? futures.price.toFixed(2) : '878.20'}pt (${futuresChg >= 0 ? '+' : ''}${futuresChg.toFixed(2)}%) 실시간 동향`,
-      `📊 美 나스닥(${nasdaqChg >= 0 ? '+' : ''}${nasdaqChg.toFixed(2)}%) · 필라델피아 반도체(${soxChg >= 0 ? '+' : ''}${soxChg.toFixed(2)}%)`,
-      `💵 원/달러 환율 ${usdkrwVal.toLocaleString()}원 · 미 국채 10년 ${us10yVal.toFixed(2)}% / 30년 ${us30yVal.toFixed(2)}%`,
-    ],
-    keyDrivers: [
-      {
-        title: '미국 증시 & 기술주 방향성',
-        impact: nasdaqChg >= 0 ? 'positive' : 'negative',
-        desc: `나스닥 ${nasdaqChg >= 0 ? '+' : ''}${nasdaqChg.toFixed(2)}%, 반도체(SOX) ${soxChg >= 0 ? '+' : ''}${soxChg.toFixed(2)}%`,
-      },
-      {
-        title: '금리 환경 (10년·30년물 국채)',
-        impact: us10yVal < 4.5 ? 'positive' : 'neutral',
-        desc: `미 국채 10년물 ${us10yVal.toFixed(2)}%, 30년물 ${us30yVal.toFixed(2)}% 수준 기록`,
-      },
-      {
-        title: '외환 및 원자재 동향',
-        impact: usdkrwVal < 1400 ? 'positive' : 'neutral',
-        desc: `원/달러 환율 ${usdkrwVal.toLocaleString()}원, WTI 유가 $${wtiVal.toFixed(2)}`,
-      },
-    ],
-    nightSessionStats: {
-      nightClose: futures?.price ?? 878.2,
-      nightChange: futures?.change ?? 0,
-      nightChangePercent: futuresChg,
-      volumeContracts: '실시간 연동 (CME/Eurex)',
-      foreignBuyingNet: futuresChg >= 0 ? '외국인 순매수 우위' : '외국인 관망세',
-      tradingHours: '전일 18:00 ~ 금일 06:00 (CME 연계 KRX 야간)',
-    },
-    fearAndGreedIndex: fearGreed,
-  };
-}
-
+// ---------------------------------------------------------------------------
+// MarketService
+// ---------------------------------------------------------------------------
 export const MarketService = {
-  // Get all market items with real live data
   async getMarketItems(): Promise<MarketItem[]> {
     try {
       const cached = await AsyncStorage.getItem(CACHED_ITEMS_KEY);
-      if (cached) {
-        return JSON.parse(cached);
-      }
-    } catch (e) {}
+      if (cached) return JSON.parse(cached);
+    } catch {}
     return INITIAL_MARKET_ITEMS;
   },
 
-  // Get morning briefing
   async getMorningBriefing(): Promise<MorningBriefing> {
     try {
       const cached = await AsyncStorage.getItem(CACHED_BRIEFING_KEY);
-      if (cached) {
-        return JSON.parse(cached);
-      }
-    } catch (e) {}
+      if (cached) return JSON.parse(cached);
+    } catch {}
     return INITIAL_MORNING_BRIEFING;
   },
 
-  // Get item by ID
   async getMarketItemById(id: string): Promise<MarketItem | undefined> {
     const items = await this.getMarketItems();
     return items.find((item) => item.id === id);
   },
 
-  // User preferences management
   async getUserPreferences(): Promise<UserPreferences> {
     try {
       const data = await AsyncStorage.getItem(PREFS_STORAGE_KEY);
-      if (data) {
-        return JSON.parse(data);
-      }
+      if (data) return JSON.parse(data);
     } catch (e) {
       console.warn('Failed to load user preferences', e);
     }
@@ -822,62 +569,43 @@ export const MarketService = {
     }
   },
 
-  // Refresh market data by fetching LIVE data from Yahoo Finance
-  async refreshData(): Promise<{ items: MarketItem[]; briefing: MorningBriefing }> {
+  /**
+   * Refresh all market data via the provider layer (Twelve Data + Korea Market).
+   * Falls back to cached / initial data on any error.
+   */
+  async refreshData(
+    currentItems: MarketItem[],
+  ): Promise<{
+    items: MarketItem[];
+    briefing: MorningBriefing;
+    fetchedAt: string | null;
+    hasLiveData: boolean;
+  }> {
     try {
-      const usTag = getUsMarketTag();
+      const result = await fetchAllMarketData(currentItems);
 
-      const [kospiLive, ...tickerResults] = await Promise.all([
-        fetchSingleTicker('^KS11'),
-        ...INITIAL_MARKET_ITEMS.map(async (item) => {
-          const symbol = YAHOO_SYMBOL_MAP[item.id] || item.symbol;
-          const live = await fetchSingleTicker(symbol);
-          if (!live || live.price <= 0) {
-            return item;
-          }
+      if (result.warnings.length > 0) {
+        console.warn('[MarketService] refresh warnings:', result.warnings.join('; '));
+      }
 
-          const change = live.price - live.previousClose;
-          const changePercent = live.previousClose > 0 ? (change / live.previousClose) * 100 : 0;
-
-          // Dynamic tag for US items
-          let dynamicTag = item.tag;
-          if (item.category === 'us_index' && item.id !== 'phil_semiconductor') {
-            dynamicTag = usTag;
-          }
-
-          return {
-            ...item,
-            price: Number(live.price.toFixed(item.category === 'macro' && item.unit === '%' ? 3 : 2)),
-            change: Number(change.toFixed(2)),
-            changePercent: Number(changePercent.toFixed(2)),
-            open: Number(live.open.toFixed(2)),
-            high: Number(live.high.toFixed(2)),
-            low: Number(live.low.toFixed(2)),
-            previousClose: Number(live.previousClose.toFixed(2)),
-            tag: dynamicTag,
-            history: live.history.length >= 3 ? live.history : item.history,
-          };
-        }),
-      ]);
-
-      const updatedItems = tickerResults;
-      const updatedBriefing = generateDynamicBriefing(updatedItems, kospiLive?.price);
-
-      // Cache updated data
-      AsyncStorage.setItem(CACHED_ITEMS_KEY, JSON.stringify(updatedItems)).catch(() => {});
-      AsyncStorage.setItem(CACHED_BRIEFING_KEY, JSON.stringify(updatedBriefing)).catch(() => {});
+      // Persist to cache
+      AsyncStorage.setItem(CACHED_ITEMS_KEY, JSON.stringify(result.items)).catch(() => {});
+      AsyncStorage.setItem(CACHED_BRIEFING_KEY, JSON.stringify(result.briefing)).catch(() => {});
 
       return {
-        items: updatedItems,
-        briefing: updatedBriefing,
+        items: result.items,
+        briefing: result.briefing,
+        fetchedAt: result.fetchedAt,
+        hasLiveData: result.hasLiveData,
       };
     } catch (e) {
-      console.warn('Live fetch error, falling back to cached data:', e);
+      console.warn('[MarketService] refreshData error, using cached data:', e);
       return {
-        items: INITIAL_MARKET_ITEMS,
+        items: currentItems,
         briefing: INITIAL_MORNING_BRIEFING,
+        fetchedAt: null,
+        hasLiveData: false,
       };
     }
   },
 };
-

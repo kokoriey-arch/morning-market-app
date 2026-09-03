@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Theme } from '../theme/theme';
@@ -9,9 +9,19 @@ interface HeaderProps {
   onRefresh: () => Promise<void>;
   onOpenSettings: () => void;
   isRefreshing: boolean;
+  /** HH:MM:SS string of the last successful data fetch, or null when never fetched */
+  lastUpdatedAt?: string | null;
+  /** true when the most recent refresh attempt failed */
+  dataFetchError?: boolean;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onRefresh, onOpenSettings, isRefreshing }) => {
+export const Header: React.FC<HeaderProps> = ({
+  onRefresh,
+  onOpenSettings,
+  isRefreshing,
+  lastUpdatedAt,
+  dataFetchError,
+}) => {
   const [spinAnim] = useState(new Animated.Value(0));
   const [countdown, setCountdown] = useState(getRemainingTimeUntilOpen());
   const { dateString, dayString } = getCurrentMorningDateString();
@@ -45,14 +55,32 @@ export const Header: React.FC<HeaderProps> = ({ onRefresh, onOpenSettings, isRef
     outputRange: ['0deg', '360deg'],
   });
 
+  // Build the live-status label
+  const liveStatusLabel = (() => {
+    if (dataFetchError && lastUpdatedAt) {
+      return `데이터 조회 실패 · 마지막 정상 업데이트 ${lastUpdatedAt}`;
+    }
+    if (dataFetchError) {
+      return '데이터 조회 실패 · 캐시 데이터 표시 중';
+    }
+    if (lastUpdatedAt) {
+      return `마지막 업데이트 ${lastUpdatedAt}`;
+    }
+    return '실시간';
+  })();
+
+  const liveColor = dataFetchError ? Theme.colors.bearish : Theme.colors.bullish;
+
   return (
     <View style={styles.container}>
       <View style={styles.topRow}>
         <View style={styles.titleContainer}>
           <View style={styles.dateBadge}>
             <Text style={styles.dateText}>{dateString} ({dayString})</Text>
-            <View style={styles.liveDot} />
-            <Text style={styles.liveText}>실시간</Text>
+            <View style={[styles.liveDot, { backgroundColor: liveColor }]} />
+            <Text style={[styles.liveText, { color: liveColor }]} numberOfLines={1}>
+              {liveStatusLabel}
+            </Text>
           </View>
           <Text style={styles.appTitle}>모닝 마켓 브리핑</Text>
         </View>
@@ -112,6 +140,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 4,
+    flexShrink: 1,
   },
   dateText: {
     fontSize: Theme.typography.sizes.xs,
@@ -124,11 +153,13 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: Theme.colors.bullish,
     marginHorizontal: 6,
+    flexShrink: 0,
   },
   liveText: {
     fontSize: 11,
     color: Theme.colors.bullish,
     fontWeight: 'bold',
+    flexShrink: 1,
   },
   appTitle: {
     fontSize: Theme.typography.sizes.xl,
@@ -140,6 +171,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    marginLeft: 8,
   },
   iconButton: {
     width: 38,

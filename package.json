@@ -10,6 +10,7 @@
     "expo-font": "~14.0.10",
     "expo-haptics": "~15.0.0",
     "expo-linear-gradient": "~15.0.0",
+    "expo-notifications": "~0.32.17",
     "expo-status-bar": "~3.0.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
@@ -24,6 +25,7 @@
   },
   "scripts": {
     "start": "expo start",
+    "proxy": "node server/kiwoomProxy.js",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web"

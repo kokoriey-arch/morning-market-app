@@ -5,6 +5,18 @@ export interface SparklinePoint {
   value: number;
 }
 
+export type KOSPI200NightFuturesStatus = 'live' | 'delayed' | 'stale' | 'unavailable';
+
+export interface KOSPI200NightFuturesData {
+  price: number;
+  change: number;
+  changeRate: number;
+  volume: number;
+  timestamp: string;
+  source: string;
+  status: KOSPI200NightFuturesStatus;
+}
+
 export interface MarketItem {
   id: string;
   symbol: string;
@@ -64,5 +76,20 @@ export interface UserPreferences {
   morningAlertTime: string; // e.g. "07:30"
   enableHaptics: boolean;
   favorites: string[]; // List of market item IDs
-  defaultTab: 'overview' | 'kospi' | 'us' | 'macro';
+  defaultTab: 'overview' | 'kospi' | 'us' | 'macro' | 'events';
+}
+
+export type EconomicEventImportance = 'high' | 'medium' | 'low';
+
+export interface EconomicEvent {
+  id: string;
+  date: string; // YYYY-MM-DD
+  time: string; // HH:MM (KST)
+  title: string; // English event name
+  koreanTitle: string;
+  category: string;
+  importance: EconomicEventImportance;
+  description: string;
+  forecast?: string;
+  previous?: string;
 }

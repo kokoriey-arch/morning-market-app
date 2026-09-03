@@ -95,3 +95,24 @@ export const getCurrentMorningDateString = (): { dateString: string; dayString: 
     timeString: `${hours}:${minutes}`,
   };
 };
+
+export const getUsMarketTag = (): string => {
+  const now = new Date();
+  const day = now.getDay();
+  const kstHour = now.getHours();
+  const kstMin = now.getMinutes();
+
+  const isTrading =
+    (day >= 1 && day <= 5 && (kstHour > 22 || (kstHour === 22 && kstMin >= 30))) ||
+    (day >= 2 && day <= 6 && (kstHour < 5 || (kstHour === 5 && kstMin === 0)));
+
+  if (isTrading) return '美 정규장 실시간 진행';
+
+  const usDate = new Date(now);
+  if (day === 0) usDate.setDate(now.getDate() - 2);
+  else if (day === 6) usDate.setDate(now.getDate() - 1);
+  else if (day === 1 && kstHour < 22) usDate.setDate(now.getDate() - 3);
+  else usDate.setDate(now.getDate() - 1);
+
+  return `美 증시 마감 (${usDate.getMonth() + 1}/${usDate.getDate()})`;
+};
