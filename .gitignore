@@ -46,3 +46,4 @@ server/.env
 *.log
 *_pid.txt
 _cb.json
+.eas-*
