@@ -47,11 +47,15 @@ const TWELVE_DATA_SYMBOLS = new Map([
 ]);
 const TWELVE_DATA_BASE_URL = 'https://api.twelvedata.com';
 // Yahoo Finance fallback (free, no API key, server-side only so CORS is not an
-// issue). Used when Twelve Data is throttled (429) or cannot serve a symbol —
+// issue). Uses v8 chart API which is the current working endpoint.
+// v7 quote API returns 401 Unauthorized, but v8 chart works without authentication. Used when Twelve Data is throttled (429) or cannot serve a symbol -
 // otherwise the app silently keeps showing stale hardcoded fallback prices.
 const YAHOO_BASE_URL = 'https://query1.finance.yahoo.com/v8/finance/chart';
 const YAHOO_TTL_MS = Number(process.env.MARKET_YAHOO_TTL_MS || 60_000);
-const YAHOO_HEADERS = { 'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)' };
+const YAHOO_HEADERS = {
+  'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'accept': 'application/json',
+};
 const YAHOO_SYMBOLS = new Map([
   ['kospi_composite', '^KS11'],
   ['nasdaq_comp', '^IXIC'], ['sp500', '^GSPC'], ['dow_jones', '^DJI'],
@@ -62,9 +66,53 @@ const YAHOO_SYMBOLS = new Map([
   ['crypto_bitcoin', 'BTC-USD'], ['crypto_ethereum', 'ETH-USD'],
   ['crypto_solana', 'SOL-USD'], ['crypto_xrp', 'XRP-USD'],
 ]);
+
+// CoinGecko API for crypto prices (free, no API key required)
+const COINGECKO_BASE_URL = 'https://api.coingecko.com/api/v3';
+const COINGECKO_TTL_MS = Number(process.env.MARKET_COINGECKO_TTL_MS || 60_000);
+const COINGECKO_SYMBOLS = new Map([
+  ['crypto_bitcoin', 'bitcoin'],
+  ['crypto_ethereum', 'ethereum'],
+  ['crypto_solana', 'solana'],
+  ['crypto_xrp', 'ripple'],
+]);
+
+// Korea Exchange (KRX) API for KOSPI data (free, public data)
+const KRX_BASE_URL = 'https://data.krx.co.kr/comm/bldAttend.cmd';
+const KRX_TTL_MS = Number(process.env.MARKET_KRX_TTL_MS || 300_000);
+
+// Exchange rate API (free, no API key)
+const EXCHANGE_RATE_BASE_URL = 'https://open.er-api.com/v6/latest/USD';
+const EXCHANGE_RATE_TTL_MS = Number(process.env.MARKET_EXCHANGE_RATE_TTL_MS || 300_000);
+
+// Naver Finance API for KOSPI (free, reliable for Korean market)
+const NAVER_KOSPI_URL = 'https://api.finance.naver.com/siseJson.naver?symbol=KOSPI&requestType=1&startTime=20240101&endTime=20241231&timeframe=day';
+const NAVER_KOSPI_TTL_MS = Number(process.env.MARKET_NAVER_TTL_MS || 300_000);
+
+// Alternative: Korea Investment & Securities API for KOSPI
+const KOSPI_FALLBACK_URL = 'https://quotation-api-cdn.dunamu.com/v1/quote-domains/KR?codes=KR7000000001';
 // Twelve Data free plan allows 8 credits per minute; a batch larger than that
 // can never succeed and just burns the request, so route it straight to Yahoo.
+// Also, many indices (IXIC, SPX, DJI, SOX) are NOT supported on the free plan,
+// so we limit Twelve Data to individual stocks only.
 const TWELVE_DATA_MAX_BATCH = 8;
+const TWELVE_DATA_SUPPORTED_TYPES = new Set(['stock']); // Only stocks work on free plan
+
+// Symbol type mapping for routing to correct API
+function getSymbolType(itemId) {
+  const typeMap = {
+    nasdaq_comp: 'index', sp500: 'index', dow_jones: 'index',
+    phil_semiconductor: 'index', macro_vix: 'index',
+    tech_nvda: 'stock', tech_tsla: 'stock', tech_aapl: 'stock',
+    tech_tsm: 'stock', tech_msft: 'stock', tech_skhy: 'stock',
+    tech_mu: 'stock', tech_sndk: 'stock',
+    fx_usdkrw: 'forex', macro_wti: 'commodity',
+    crypto_bitcoin: 'crypto', crypto_ethereum: 'crypto',
+    crypto_solana: 'crypto', crypto_xrp: 'crypto',
+    kospi_composite: 'index',
+  };
+  return typeMap[itemId] || 'unknown';
+}
 // CNN Fear & Greed index (published, free). Server-side fetch avoids CORS and
 // keeps the app's sentiment gauge aligned with the widely-cited source instead
 // of a VIX-only approximation.
@@ -72,7 +120,8 @@ const CNN_FNG_URL = 'https://production.dataviz.cnn.io/index/fearandgreed/graphd
 const SENTIMENT_TTL_MS = Number(process.env.MARKET_SENTIMENT_TTL_MS || 600_000);
 const CNN_HEADERS = {
   'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  accept: 'application/json',
+  accept: 'application/json, text/plain, */*',
+  'accept-language': 'en-US,en;q=0.9',
 };
 const FNG_RATING_LABELS = {
   'extreme fear': 'Extreme Fear (극단적 공포)',
@@ -81,6 +130,10 @@ const FNG_RATING_LABELS = {
   'greed': 'Greed (탐욕 - 매수 우세)',
   'extreme greed': 'Extreme Greed (극단적 탐욕)',
 };
+
+// Alternative Fear & Greed API (Alternative.me) - more reliable
+const ALTERNATIVE_FNG_URL = 'https://api.alternative.me/fng/?limit=2';
+const ALTERNATIVE_FNG_TTL_MS = Number(process.env.MARKET_SENTIMENT_TTL_MS || 600_000);
 let tokenCache;
 
 // ---------------------------------------------------------------------------
@@ -252,42 +305,224 @@ async function fetchTwelveDataHistoryUpstream(symbol) {
   return { status: upstream.status, body: await upstream.json() };
 }
 
+// Stock Market Fear & Greed (CNN) - for stock market sentiment
+async function fetchStockFearGreedUpstream() {
+  try {
+    const upstream = await fetch(CNN_FNG_URL, { headers: CNN_HEADERS });
+    if (!upstream.ok) return { status: upstream.status, body: { error: 'Stock sentiment source unavailable' } };
+    const data = await upstream.json();
+    const fng = data && data.fear_and_greed;
+    const score = fng ? Math.round(Number(fng.score)) : NaN;
+    if (!isFinite(score)) return { status: 502, body: { error: 'Stock sentiment payload malformed' } };
+    const ratingKey = String(fng.rating || '').trim().toLowerCase();
+    const previousClose = Number(fng.previous_close);
+    return {
+      status: 200,
+      body: {
+        score,
+        rating: FNG_RATING_LABELS[ratingKey] || fng.rating || 'Neutral (중립)',
+        ...(isFinite(previousClose) && previousClose > 0 ? { previousClose: Math.round(previousClose) } : {}),
+      },
+    };
+  } catch (e) {
+    console.log('[Stock FearGreed] CNN failed:', e.message);
+    return { status: 502, body: { error: 'Stock sentiment source unavailable' } };
+  }
+}
+
+// Crypto Market Fear & Greed (Alternative.me) - for crypto market sentiment
+async function fetchCryptoFearGreedUpstream() {
+  try {
+    const upstream = await fetch(ALTERNATIVE_FNG_URL, { headers: { 'accept': 'application/json' } });
+    if (upstream.ok) {
+      const data = await upstream.json();
+      if (data && Array.isArray(data.data) && data.data.length > 0) {
+        const current = data.data[0];
+        const score = Math.round(Number(current.value));
+        if (isFinite(score)) {
+          const ratingKey = String(current.value_classification || '').trim().toLowerCase();
+          const previousClose = data.data.length > 1 ? Math.round(Number(data.data[1].value)) : undefined;
+          return {
+            status: 200,
+            body: {
+              score,
+              rating: FNG_RATING_LABELS[ratingKey] || current.value_classification || 'Neutral (중립)',
+              ...(isFinite(previousClose) && previousClose > 0 ? { previousClose } : {}),
+            },
+          };
+        }
+      }
+    }
+  } catch (e) {
+    console.log('[Crypto FearGreed] Alternative.me failed:', e.message);
+  }
+  return { status: 502, body: { error: 'Crypto sentiment source unavailable' } };
+}
+
+// Legacy combined endpoint (kept for backward compatibility)
 async function fetchFearGreedUpstream() {
-  const upstream = await fetch(CNN_FNG_URL, { headers: CNN_HEADERS });
-  if (!upstream.ok) return { status: upstream.status, body: { error: 'Sentiment source unavailable' } };
-  const data = await upstream.json();
-  const fng = data && data.fear_and_greed;
-  const score = fng ? Math.round(Number(fng.score)) : NaN;
-  if (!isFinite(score)) return { status: 502, body: { error: 'Sentiment payload malformed' } };
-  const ratingKey = String(fng.rating || '').trim().toLowerCase();
-  const previousClose = Number(fng.previous_close);
-  return {
-    status: 200,
-    body: {
-      score,
-      rating: FNG_RATING_LABELS[ratingKey] || fng.rating || 'Neutral (중립)',
-      ...(isFinite(previousClose) && previousClose > 0 ? { previousClose: Math.round(previousClose) } : {}),
-    },
-  };
+  // Default to crypto (Alternative.me) for backward compatibility
+  return fetchCryptoFearGreedUpstream();
+}
+
+// Fetch KOSPI index from Kiwoom API (FHPUP02100000 - ka20001)
+async function fetchKospiFromKiwoom() {
+  try {
+    const token = await getToken();
+    const upstream = await fetch(`${KIWOOM_BASE_URL}/api/dostk/sect`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json;charset=UTF-8',
+        'authorization': `Bearer ${token}`,
+        'appkey': process.env.KIWOOM_APP_KEY,
+        'api-id': 'ka20001',
+      },
+      body: JSON.stringify({ mrkt_tp: '0', inds_cd: '001' }),
+    });
+    if (!upstream.ok) return null;
+    const data = await upstream.json();
+    if (!data || data.return_code !== 0) return null;
+    const price = Math.abs(Number(data.cur_prc)) || 0;
+    if (price <= 0) return null;
+    return {
+      price,
+      previousClose: Math.abs(Number(data.pred_pre)) || undefined,
+      open: Math.abs(Number(data.open_pric)) || undefined,
+      high: Math.abs(Number(data.high_pric)) || undefined,
+      low: Math.abs(Number(data.low_pric)) || undefined,
+    };
+  } catch (e) {
+    console.log('[KOSPI Kiwoom] Error:', e.message);
+    return null;
+  }
 }
 
 async function fetchYahooQuoteUpstream(yahooSymbol) {
+  // Yahoo Finance v8 chart API endpoint (v7 quote returns 401 Unauthorized)
   const url = `${YAHOO_BASE_URL}/${encodeURIComponent(yahooSymbol)}?range=1d&interval=1d`;
   const upstream = await fetch(url, { headers: YAHOO_HEADERS });
   if (!upstream.ok) return { status: upstream.status, body: null };
   const data = await upstream.json();
   const result = data && data.chart && Array.isArray(data.chart.result) ? data.chart.result[0] : null;
   const meta = result ? result.meta : null;
-  const price = meta ? Number(meta.regularMarketPrice) : NaN;
+  if (!meta) return { status: 404, body: null };
+  const price = Number(meta.regularMarketPrice);
   if (!isFinite(price) || price <= 0) return { status: 404, body: null };
-  const previousClose = meta ? Number(meta.chartPreviousClose ?? meta.previousClose) : NaN;
+  const previousClose = Number(meta.chartPreviousClose ?? meta.previousClose);
+  const open = Number(meta.regularMarketDayHigh ?? meta.regularMarketOpen);
+  const high = Number(meta.regularMarketDayHigh);
+  const low = Number(meta.regularMarketDayLow);
   return {
     status: 200,
     body: {
       price: String(price),
       ...(isFinite(previousClose) && previousClose > 0 ? { previousClose: String(previousClose) } : {}),
+      ...(isFinite(open) && open > 0 ? { open: String(open) } : {}),
+      ...(isFinite(high) && high > 0 ? { high: String(high) } : {}),
+      ...(isFinite(low) && low > 0 ? { low: String(low) } : {}),
     },
   };
+}
+
+// Fetch crypto prices from CoinGecko (free, no API key)
+async function fetchCryptoPricesFromCoinGecko() {
+  const ids = Array.from(COINGECKO_SYMBOLS.values()).join(',');
+  const url = `${COINGECKO_BASE_URL}/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`;
+  const upstream = await fetch(url, { headers: { 'accept': 'application/json' } });
+  if (!upstream.ok) return null;
+  const data = await upstream.json();
+  if (!data || typeof data !== 'object') return null;
+
+  const result = {};
+  for (const [itemId, coinId] of COINGECKO_SYMBOLS.entries()) {
+    const coinData = data[coinId];
+    if (coinData && coinData.usd) {
+      result[itemId] = {
+        price: String(coinData.usd),
+        ...(coinData.usd_24h_change !== undefined ? { changePercent: String(coinData.usd_24h_change) } : {}),
+      };
+    }
+  }
+  return result;
+}
+
+// Fetch USD/KRW from Yahoo Finance (via yahooIds)
+async function fetchUsdKrwRate() {
+  const url = EXCHANGE_RATE_BASE_URL;
+  const upstream = await fetch(url, { headers: { 'accept': 'application/json' } });
+  if (!upstream.ok) return null;
+  const data = await upstream.json();
+  if (data && data.result === 'success' && data.rates && data.rates.KRW) {
+    return data.rates.KRW;
+  }
+  return null;
+}
+
+// Fetch KOSPI index from Naver Finance
+async function fetchKospiFromNaver() {
+  const url = 'https://api.finance.naver.com/siseJson.naver?symbol=KOSPI&requestType=1&startTime=20260101&endTime=20261231&timeframe=day';
+  const upstream = await fetch(url, { headers: { 'user-agent': YAHOO_HEADERS['user-agent'] } });
+  if (!upstream.ok) return null;
+  const text = await upstream.text();
+  // Naver returns JSON-like array format, need to parse carefully
+  try {
+    // Remove any BOM and parse
+    const cleanText = text.replace(/^\uFEFF/, '').trim();
+    const data = JSON.parse(cleanText);
+    if (Array.isArray(data) && data.length > 0) {
+      // Last element is the most recent: [date, open, high, low, close, volume, foreign]
+      const latest = data[data.length - 1];
+      if (Array.isArray(latest) && latest.length >= 5) {
+        const close = Number(latest[4]);
+        const open = Number(latest[1]);
+        if (isFinite(close) && close > 0) {
+          return {
+            price: close,
+            open: isFinite(open) ? open : close,
+            previousClose: data.length > 1 ? Number(data[data.length - 2][4]) : undefined,
+          };
+        }
+      }
+    }
+  } catch (e) {
+    console.log('[NaverKOSPI] Parse error:', e.message);
+  }
+  return null;
+}
+
+// Fetch KOSPI index from Dunamu API (alternative)
+async function fetchKospiFromDunamu() {
+  const url = 'https://quotation-api-cdn.dunamu.com/v1/quote-domains/KR?codes=KR7000000001';
+  const upstream = await fetch(url, { headers: { 'accept': 'application/json', 'user-agent': YAHOO_HEADERS['user-agent'] } });
+  if (!upstream.ok) return null;
+  const data = await upstream.json();
+  if (Array.isArray(data) && data.length > 0) {
+    const quote = data[0];
+    const price = Number(quote?.tradePrice ?? quote?.price ?? quote?.closePrice);
+    if (isFinite(price) && price > 0) {
+      const previousClose = Number(quote?.prevClosePrice ?? quote?.previousClose);
+      return {
+        price,
+        previousClose: isFinite(previousClose) ? previousClose : undefined,
+      };
+    }
+  }
+  return null;
+}
+
+// Combined KOSPI fetcher with fallback
+async function fetchKospiIndex() {
+  // Try Naver first
+  const naverResult = await fetchCached('kospi:naver', NAVER_KOSPI_TTL_MS, 0, fetchKospiFromNaver);
+  if (naverResult.status === 200 && naverResult.body) {
+    return naverResult.body;
+  }
+  // Fallback to Dunamu
+  const dunamuResult = await fetchCached('kospi:dunamu', NAVER_KOSPI_TTL_MS, 0, fetchKospiFromDunamu);
+  if (dunamuResult.status === 200 && dunamuResult.body) {
+    return dunamuResult.body;
+  }
+  return null;
 }
 
 // Fetch Yahoo quotes for a list of { key, yahooSymbol } pairs and merge them
@@ -344,7 +579,6 @@ const server = http.createServer(async (request, response) => {
   try {
     const input = await readBody(request);
     if (request.url === '/api/twelve-data') {
-      if (!process.env.TWELVE_DATA_API_KEY) throw new Error('Twelve Data credentials are not configured');
       if (input.operation === 'prices') {
         const requested = (Array.isArray(input.itemIds) ? input.itemIds : [])
           .map((itemId) => ({ itemId, symbol: TWELVE_DATA_SYMBOLS.get(itemId) }));
@@ -353,46 +587,65 @@ const server = http.createServer(async (request, response) => {
         let status = 200;
         let body = {};
         let cacheLabel = 'MISS';
-        // Items without a Twelve Data mapping (e.g. kospi_composite → Yahoo
-        // only) skip the credit meter entirely and use the Yahoo fallback.
-        const missing = requested.filter((x) => !x.symbol);
 
-        const tdRequested = requested.filter((x) => x.symbol);
-        if (tdRequested.length > 0 && tdRequested.length <= TWELVE_DATA_MAX_BATCH) {
-          const symbols = tdRequested.map((x) => x.symbol);
-          const result = await fetchCached(
-            `td-price:${symbols.join(',')}`,
-            PRICE_TTL_MS,
-            symbols.length, // batched /price costs 1 credit per symbol
-            () => fetchTwelveDataPricesUpstream(symbols),
-          );
-          status = result.status;
-          cacheLabel = result.cache || 'MISS';
-          body = (result.body && typeof result.body === 'object' && !Array.isArray(result.body)) ? result.body : {};
-          for (const { itemId, symbol } of tdRequested) {
-            const entry = body[symbol];
-            if (!entry || typeof entry !== 'object' || !entry.price || entry.status === 'error') {
-              missing.push({ itemId, symbol });
-            }
-          }
-        } else if (tdRequested.length > TWELVE_DATA_MAX_BATCH) {
-          // Bigger than the free plan's per-minute credit budget: skip Twelve
-          // Data (the call would just 429) and use Yahoo for everything.
-          missing.push(...tdRequested);
-        }
+        // Separate items by preferred data source
+        const cryptoIds = requested.filter(({ itemId }) => COINGECKO_SYMBOLS.has(itemId));
+        const kospiIds = requested.filter(({ itemId }) => itemId === 'kospi_composite');
+        const yahooIds = requested.filter(({ itemId }) => {
+          if (COINGECKO_SYMBOLS.has(itemId)) return false;
+          if (itemId === 'kospi_composite') return false; // KOSPI uses Kiwoom API
+          return true; // Everything else goes to Yahoo Finance (including forex, indices)
+        });
 
         let yahooUsed = false;
-        if (missing.length > 0) {
-          const yahooQuotes = await fetchYahooQuotes(missing.map(({ itemId, symbol }) => {
+
+        // Fetch all non-crypto/non-forex/non-kospi items from Yahoo Finance
+        if (yahooIds.length > 0) {
+          const yahooQuotes = await fetchYahooQuotes(yahooIds.map(({ itemId, symbol }) => {
             const yahooSymbol = YAHOO_SYMBOLS.get(itemId);
-            // Key by the Twelve Data symbol when there is one, otherwise by the
-            // Yahoo symbol itself (Yahoo-only items like kospi_composite).
             return { key: symbol || yahooSymbol, yahooSymbol };
           }));
           if (Object.keys(yahooQuotes).length > 0) {
             yahooUsed = true;
             body = { ...body, ...yahooQuotes };
             if (status !== 200) status = 200;
+          }
+        }
+
+        // Fetch crypto prices from CoinGecko
+        if (cryptoIds.length > 0) {
+          try {
+            const cryptoPrices = await fetchCached('coingecko:prices', COINGECKO_TTL_MS, 0, fetchCryptoPricesFromCoinGecko);
+            if (cryptoPrices) {
+              for (const { itemId } of cryptoIds) {
+                const cryptoData = cryptoPrices[itemId];
+                if (cryptoData) {
+                  body[itemId] = cryptoData;
+                }
+              }
+              yahooUsed = true;
+            }
+          } catch (e) {
+            console.log('[CoinGecko] Failed:', e.message);
+          }
+        }
+
+        // Fetch KOSPI index from Kiwoom API
+        if (kospiIds.length > 0) {
+          try {
+            const kospiData = await fetchCached('kospi:kiwoom', KIWOOM_TTL_MS, 0, fetchKospiFromKiwoom);
+            if (kospiData && kospiData.price) {
+              body['kospi_composite'] = {
+                price: String(kospiData.price),
+                ...(kospiData.previousClose ? { previousClose: String(kospiData.previousClose) } : {}),
+                ...(kospiData.open ? { open: String(kospiData.open) } : {}),
+                ...(kospiData.high ? { high: String(kospiData.high) } : {}),
+                ...(kospiData.low ? { low: String(kospiData.low) } : {}),
+              };
+              yahooUsed = true;
+            }
+          } catch (e) {
+            console.log('[KOSPI Kiwoom] Failed:', e.message);
           }
         }
 
@@ -424,8 +677,15 @@ const server = http.createServer(async (request, response) => {
       return json(response, 400, { error: 'Unsupported operation' });
     }
     if (request.url === '/api/sentiment') {
-      const result = await fetchCached('cnn-fng', SENTIMENT_TTL_MS, 0, fetchFearGreedUpstream);
-      return json(response, result.status, result.body, { 'x-cache': result.cache });
+      // Fetch both stock (CNN) and crypto (Alternative.me) Fear & Greed indices
+      const [stockResult, cryptoResult] = await Promise.all([
+        fetchCached('stock-fng', SENTIMENT_TTL_MS, 0, fetchStockFearGreedUpstream),
+        fetchCached('crypto-fng', SENTIMENT_TTL_MS, 0, fetchCryptoFearGreedUpstream),
+      ]);
+      return json(response, 200, {
+        stock: stockResult.body,
+        crypto: cryptoResult.body,
+      }, { 'x-cache': stockResult.cache });
     }
     const endpoint = ALLOWED_APIS.get(input.apiId);
     if (!endpoint || endpoint !== input.endpoint) return json(response, 400, { error: 'Unsupported API' });

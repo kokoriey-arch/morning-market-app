@@ -77,11 +77,20 @@ export const MacroScreen: React.FC<MacroScreenProps> = ({
         />
       ))}
 
-      {/* Sentiment Gauge */}
+      {/* Sentiment Gauges (Stock + Crypto) */}
       <FearGreedGauge
+        title="글로벌 투자 심리 (Stock Fear & Greed)"
+        badge="주식"
         score={briefing.fearAndGreedIndex.score}
         rating={briefing.fearAndGreedIndex.rating}
         previousClose={briefing.fearAndGreedIndex.previousClose}
+      />
+      <FearGreedGauge
+        title="코인 투자 심리 (Crypto Fear & Greed)"
+        badge="코인"
+        score={briefing.cryptoFearAndGreedIndex.score}
+        rating={briefing.cryptoFearAndGreedIndex.rating}
+        previousClose={briefing.cryptoFearAndGreedIndex.previousClose}
       />
 
       <View style={styles.bottomSpacer} />

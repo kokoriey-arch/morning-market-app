@@ -69,6 +69,11 @@ export interface MorningBriefing {
     rating: string;
     previousClose: number;
   };
+  cryptoFearAndGreedIndex: {
+    score: number;
+    rating: string;
+    previousClose: number;
+  };
 }
 
 export interface UserPreferences {

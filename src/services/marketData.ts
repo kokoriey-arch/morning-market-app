@@ -518,6 +518,7 @@ export const INITIAL_MORNING_BRIEFING: MorningBriefing = {
     tradingHours: '전일 18:00 ~ 금일 06:00 (CME 연계 KRX)',
   },
   fearAndGreedIndex: { score: 62, rating: 'Greed (탐욕 - 매수 심리 우세)', previousClose: 58 },
+  cryptoFearAndGreedIndex: { score: 74, rating: 'Greed (탐욕 - 매수 심리 우세)', previousClose: 65 },
 };
 
 // ---------------------------------------------------------------------------

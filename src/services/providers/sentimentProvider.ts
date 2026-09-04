@@ -1,10 +1,9 @@
 /**
- * Market sentiment provider — CNN Fear & Greed index.
+ * Market sentiment provider — Stock (CNN) & Crypto (Alternative.me) Fear & Greed indices.
  *
- * Fetches the widely-cited CNN Fear & Greed index through the server proxy
- * (/api/sentiment), so the gauge matches the published value instead of a
- * VIX-only approximation. Returns null when unavailable; callers should fall
- * back to the VIX-based estimate in that case.
+ * Fetches both stock and crypto Fear & Greed indices through the server proxy
+ * (/api/sentiment). Returns null when unavailable; callers should fall back to
+ * the VIX-based estimate in that case.
  */
 
 import { Platform } from 'react-native';
@@ -21,6 +20,11 @@ export interface FearGreedResult {
   previousClose?: number;
 }
 
+export interface MarketSentimentResult {
+  stock: FearGreedResult | null;
+  crypto: FearGreedResult | null;
+}
+
 async function fetchWithTimeout(url: string, timeoutMs: number, init?: RequestInit): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -31,10 +35,22 @@ async function fetchWithTimeout(url: string, timeoutMs: number, init?: RequestIn
   }
 }
 
-export async function fetchFearGreedIndex(): Promise<FearGreedResult | null> {
+function parseFearGreedBody(body: { score?: number; rating?: string; previousClose?: number; error?: string }): FearGreedResult | null {
+  if (body.error || typeof body.score !== 'number' || !isFinite(body.score)) return null;
+  return {
+    score: Math.round(body.score),
+    rating: body.rating || 'Neutral (중립)',
+    ...(typeof body.previousClose === 'number' && body.previousClose > 0
+      ? { previousClose: Math.round(body.previousClose) }
+      : {}),
+  };
+}
+
+/**
+ * Fetch both Stock (CNN) and Crypto (Alternative.me) Fear & Greed indices.
+ */
+export async function fetchMarketSentiment(): Promise<MarketSentimentResult> {
   try {
-    // The proxy only accepts POST on its API routes — a GET would 404 and
-    // silently drop us back to the VIX-based estimate.
     const res = await fetchWithTimeout(`${MARKET_API_URL}/api/sentiment`, TIMEOUT_MS, {
       method: 'POST',
       headers: {
@@ -43,19 +59,27 @@ export async function fetchFearGreedIndex(): Promise<FearGreedResult | null> {
       },
       body: JSON.stringify({}),
     });
-    if (!res.ok) return null;
+    if (!res.ok) return { stock: null, crypto: null };
 
-    const json = await res.json() as { score?: number; rating?: string; previousClose?: number; error?: string };
-    if (json.error || typeof json.score !== 'number' || !isFinite(json.score)) return null;
+    const json = await res.json() as {
+      stock?: { score?: number; rating?: string; previousClose?: number; error?: string };
+      crypto?: { score?: number; rating?: string; previousClose?: number; error?: string };
+    };
 
     return {
-      score: Math.round(json.score),
-      rating: json.rating || 'Neutral (중립)',
-      ...(typeof json.previousClose === 'number' && json.previousClose > 0
-        ? { previousClose: Math.round(json.previousClose) }
-        : {}),
+      stock: json.stock ? parseFearGreedBody(json.stock) : null,
+      crypto: json.crypto ? parseFearGreedBody(json.crypto) : null,
     };
   } catch {
-    return null;
+    return { stock: null, crypto: null };
   }
+}
+
+/**
+ * Legacy: Fetch only the crypto Fear & Greed index (Alternative.me).
+ * Kept for backward compatibility.
+ */
+export async function fetchFearGreedIndex(): Promise<FearGreedResult | null> {
+  const result = await fetchMarketSentiment();
+  return result.crypto;
 }

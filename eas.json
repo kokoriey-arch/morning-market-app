@@ -12,10 +12,18 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_MARKET_API_URL": "https://morning-market-app-zv5r.onrender.com",
+        "EXPO_PUBLIC_MARKET_API_TOKEN": "bswzYfIZUBa03L6j4h1kroSl5WgCAmiu"
       }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_MARKET_API_URL": "https://morning-market-app-zv5r.onrender.com",
+        "EXPO_PUBLIC_MARKET_API_TOKEN": "bswzYfIZUBa03L6j4h1kroSl5WgCAmiu"
+      }
     }
   },
   "submit": {

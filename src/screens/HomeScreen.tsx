@@ -53,7 +53,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* 2. KOSPI Overnight Futures Section */}
       <View style={styles.sectionHeaderRow}>
         <View style={styles.sectionTitleWrap}>
-          <Text style={styles.sectionTitle}>🌙 새벽 코스피 야간선물</Text>
+          <Text style={styles.sectionTitle}>새벽 코스피 야간선물</Text>
           <Text style={styles.sectionSub}>오늘 아침 06:00 최종 마감</Text>
         </View>
         <TouchableOpacity
@@ -64,8 +64,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           <Ionicons name="chevron-forward" size={14} color={Theme.colors.primary} />
         </TouchableOpacity>
       </View>
-
-      {kospiFutures && kospiFutures.price > 0 ? (
+{kospiFutures && kospiFutures.price > 0 ? (
         <View style={styles.kospiSectionWrap}>
           <MarketCard
             item={kospiFutures}
@@ -89,8 +88,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             <Text style={styles.futuresStubTitle}>야간선물 시세 준비 중</Text>
           </View>
           <Text style={styles.futuresStubText}>
-            코스피 200 야간선물(KM200N) 실시간 시세는 승인된 공식 시세 제공처(키움 REST API) 연동 후 제공될
-            예정입니다. 연결되면 이 영역에 야간선물 시세와 상세 차트가 표시됩니다.
+            코스피 200 야간선물(KM200N) 실시간 연동은 키움 REST API 문서를 통해
+            연결할 예정입니다. 연결되면, 야간선물 시세와 상세 차트가 표시됩니다.
           </Text>
         </View>
       )}
@@ -98,8 +97,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* 3. US Market & Semiconductor Highlight */}
       <View style={styles.sectionHeaderRow}>
         <View style={styles.sectionTitleWrap}>
-          <Text style={styles.sectionTitle}>🇺🇸 미국 증시 핵심 지수</Text>
-          <Text style={styles.sectionSub}>나스닥 및 필라델피아 반도체 동향</Text>
+          <Text style={styles.sectionTitle}>미국 증시 주요 지수</Text>
+          <Text style={styles.sectionSub}>나스닥 · 필라델피아 반도체 동향</Text>
         </View>
         <TouchableOpacity
           style={styles.moreButton}
@@ -118,11 +117,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           onToggleFavorite={onToggleFavorite}
         />
       ))}
-
-      {/* 4. Top Big Tech Highlights */}
+{/* 4. Top Big Tech Highlights */}
       <View style={styles.sectionHeaderRow}>
         <View style={styles.sectionTitleWrap}>
-          <Text style={styles.sectionTitle}>⚡ 미국 주요 빅테크 릴레이</Text>
+          <Text style={styles.sectionTitle}>미국 주요 빅테크 릴레이</Text>
           <Text style={styles.sectionSub}>엔비디아, 테슬라, 애플</Text>
         </View>
         <TouchableOpacity
@@ -146,8 +144,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* 5. Macro FX & Yields */}
       <View style={styles.sectionHeaderRow}>
         <View style={styles.sectionTitleWrap}>
-          <Text style={styles.sectionTitle}>💵 환율 및 금리 지표</Text>
-          <Text style={styles.sectionSub}>외인 수급 영향 요인</Text>
+          <Text style={styles.sectionTitle}>환율 & 금리 지표</Text>
+          <Text style={styles.sectionSub}>주요 통화 및 금리 동향 파악</Text>
         </View>
         <TouchableOpacity
           style={styles.moreButton}
@@ -166,11 +164,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           onToggleFavorite={onToggleFavorite}
         />
       ))}
-
-      {/* 6. Major crypto price trends */}
+{/* 6. Major crypto price trends */}
       <View style={styles.sectionHeaderRow}>
         <View style={styles.sectionTitleWrap}>
-          <Text style={styles.sectionTitle}>₿ 주요 코인 가격 트렌드</Text>
+          <Text style={styles.sectionTitle}>주요 코인 가격 트렌드</Text>
           <Text style={styles.sectionSub}>BTC · ETH · SOL · XRP 24시간 흐름</Text>
         </View>
       </View>
@@ -183,18 +180,27 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           onToggleFavorite={onToggleFavorite}
         />
       ))}
-      {/* 6. Fear & Greed Sentiment Gauge */}
+
+      {/* 6. Fear & Greed Sentiment Gauges (Stock + Crypto) */}
       <FearGreedGauge
+        title="글로벌 투자 심리 (Stock Fear & Greed)"
+        badge="주식"
         score={briefing.fearAndGreedIndex.score}
         rating={briefing.fearAndGreedIndex.rating}
         previousClose={briefing.fearAndGreedIndex.previousClose}
+      />
+      <FearGreedGauge
+        title="코인 투자 심리 (Crypto Fear & Greed)"
+        badge="코인"
+        score={briefing.cryptoFearAndGreedIndex.score}
+        rating={briefing.cryptoFearAndGreedIndex.rating}
+        previousClose={briefing.cryptoFearAndGreedIndex.previousClose}
       />
 
       <View style={styles.bottomSpacer} />
     </ScrollView>
   );
 };
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,

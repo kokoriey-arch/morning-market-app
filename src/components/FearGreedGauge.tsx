@@ -7,9 +7,12 @@ interface FearGreedGaugeProps {
   score: number;
   rating: string;
   previousClose: number;
+  title?: string;
+  /** Accent label shown next to the title, e.g. "주식" / "코인" */
+  badge?: string;
 }
 
-export const FearGreedGauge: React.FC<FearGreedGaugeProps> = ({ score, rating, previousClose }) => {
+export const FearGreedGauge: React.FC<FearGreedGaugeProps> = ({ score, rating, previousClose, title, badge }) => {
   const size = 160;
   const strokeWidth = 14;
   const radius = (size - strokeWidth) / 2;
@@ -35,7 +38,12 @@ export const FearGreedGauge: React.FC<FearGreedGaugeProps> = ({ score, rating, p
   return (
     <View style={styles.container}>
       <View style={styles.topRow}>
-        <Text style={styles.title}>글로벌 투자 심리 (Fear & Greed Index)</Text>
+        <Text style={styles.title}>{title ?? '글로벌 투자 심리 (Fear & Greed Index)'}</Text>
+        {badge ? (
+          <View style={styles.badgeWrap}>
+            <Text style={styles.badge}>{badge}</Text>
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.gaugeWrapper}>
@@ -100,7 +108,21 @@ const styles = StyleSheet.create({
     borderColor: Theme.colors.cardBorder,
   },
   topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: Theme.spacing.sm,
+  },
+  badgeWrap: {
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  badge: {
+    fontSize: 10,
+    color: Theme.colors.primary,
+    fontWeight: '700',
   },
   title: {
     fontSize: Theme.typography.sizes.xs,

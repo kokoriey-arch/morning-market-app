@@ -19,7 +19,7 @@ import {
   getKoreaMarketData,
 } from './koreaMarketProvider';
 import { getUsMarketTag } from '../../utils/formatters';
-import { fetchFearGreedIndex, FearGreedResult } from './sentimentProvider';
+import { fetchMarketSentiment, FearGreedResult, MarketSentimentResult } from './sentimentProvider';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -54,6 +54,7 @@ export function generateDynamicBriefing(
   kospiCompositePrice?: number,
   updatedAt?: string,
   sentiment?: FearGreedResult | null,
+  cryptoSentiment?: FearGreedResult | null,
 ): MorningBriefing {
   const now = new Date();
   const days = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
@@ -141,6 +142,16 @@ export function generateDynamicBriefing(
       }
     : calculateFearAndGreed(vixVal);
 
+  // Crypto Fear & Greed (Alternative.me) when available; otherwise fall back
+  // to the VIX-based approximation.
+  const cryptoFearGreed = cryptoSentiment
+    ? {
+        score: cryptoSentiment.score,
+        rating: cryptoSentiment.rating,
+        previousClose: cryptoSentiment.previousClose ?? Math.max(5, Math.min(95, cryptoSentiment.score - 2)),
+      }
+    : calculateFearAndGreed(vixVal);
+
   return {
     dateString,
     dayOfWeek,
@@ -183,6 +194,7 @@ export function generateDynamicBriefing(
       tradingHours: '전일 18:00 ~ 금일 06:00 (CME 연계 KRX 야간)',
     },
     fearAndGreedIndex: fearGreed,
+    cryptoFearAndGreedIndex: cryptoFearGreed,
   };
 }
 
@@ -214,15 +226,22 @@ export async function fetchAllMarketData(
     for (const id of twelveDataIds) priceMap[id] = null;
   }
 
-  // ── 1.5 Global sentiment (CNN Fear & Greed) ────────────────────────────────
+  // ── 1.5 Global sentiment (Stock CNN + Crypto Alternative.me) ───────────────
   let sentiment: FearGreedResult | null = null;
+  let cryptoSentiment: FearGreedResult | null = null;
   try {
-    sentiment = await fetchFearGreedIndex();
+    const marketSentiment = await fetchMarketSentiment();
+    sentiment = marketSentiment.stock;
+    cryptoSentiment = marketSentiment.crypto;
   } catch {
     sentiment = null;
+    cryptoSentiment = null;
   }
   if (!sentiment) {
-    warnings.push('CNN Fear & Greed unavailable — VIX-based estimate used');
+    warnings.push('Stock Fear & Greed unavailable — VIX-based estimate used');
+  }
+  if (!cryptoSentiment) {
+    warnings.push('Crypto Fear & Greed unavailable');
   }
 
   // ── 2. Korea Market Provider ───────────────────────────────────────────────
@@ -327,7 +346,7 @@ export async function fetchAllMarketData(
     ? `마지막 업데이트 ${hh}:${mm}:${ss}`
     : `캐시 데이터 (${getUsMarketTag()} 기준)`;
 
-  const briefing = generateDynamicBriefing(updatedItems, kospiCompositePrice ?? undefined, updatedAtLabel, sentiment);
+  const briefing = generateDynamicBriefing(updatedItems, kospiCompositePrice ?? undefined, updatedAtLabel, sentiment, cryptoSentiment);
 
   return { items: updatedItems, briefing, fetchedAt, hasLiveData, warnings };
 }
