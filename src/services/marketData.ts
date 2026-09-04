@@ -19,8 +19,8 @@ import { fetchAllMarketData } from './providers/marketProvider';
 export { getUsMarketTag };
 
 const PREFS_STORAGE_KEY = '@morning_market_user_prefs_v1';
-const CACHED_ITEMS_KEY = '@morning_market_cached_items_v5';
-const CACHED_BRIEFING_KEY = '@morning_market_cached_briefing_v5';
+const CACHED_ITEMS_KEY = '@morning_market_cached_items_v6';
+const CACHED_BRIEFING_KEY = '@morning_market_cached_briefing_v6';
 
 // ---------------------------------------------------------------------------
 // Static seed data
@@ -521,6 +521,30 @@ export const INITIAL_MORNING_BRIEFING: MorningBriefing = {
   cryptoFearAndGreedIndex: { score: 74, rating: 'Greed (탐욕 - 매수 심리 우세)', previousClose: 65 },
 };
 
+/**
+ * Normalize a cached/incomplete MorningBriefing so newly added fields always
+ * exist. Without this, an upgrade would crash on
+ * briefing.cryptoFearAndGreedIndex.score when the old cache lacks the field.
+ */
+function normalizeBriefing(b: Partial<MorningBriefing>): MorningBriefing {
+  return {
+    ...INITIAL_MORNING_BRIEFING,
+    ...b,
+    nightSessionStats: {
+      ...INITIAL_MORNING_BRIEFING.nightSessionStats,
+      ...(b.nightSessionStats || {}),
+    },
+    fearAndGreedIndex: {
+      ...INITIAL_MORNING_BRIEFING.fearAndGreedIndex,
+      ...(b.fearAndGreedIndex || {}),
+    },
+    cryptoFearAndGreedIndex: {
+      ...INITIAL_MORNING_BRIEFING.cryptoFearAndGreedIndex,
+      ...(b.cryptoFearAndGreedIndex || {}),
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // MarketService
 // ---------------------------------------------------------------------------
@@ -536,7 +560,10 @@ export const MarketService = {
   async getMorningBriefing(): Promise<MorningBriefing> {
     try {
       const cached = await AsyncStorage.getItem(CACHED_BRIEFING_KEY);
-      if (cached) return JSON.parse(cached);
+      if (cached) {
+        const parsed = JSON.parse(cached) as Partial<MorningBriefing>;
+        return normalizeBriefing(parsed);
+      }
     } catch {}
     return INITIAL_MORNING_BRIEFING;
   },
