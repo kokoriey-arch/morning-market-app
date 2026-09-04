@@ -591,11 +591,11 @@ const server = http.createServer(async (request, response) => {
         // Separate items by preferred data source
         const cryptoIds = requested.filter(({ itemId }) => COINGECKO_SYMBOLS.has(itemId));
         const kospiIds = requested.filter(({ itemId }) => itemId === 'kospi_composite');
-        const yahooIds = requested.filter(({ itemId }) => {
-          if (COINGECKO_SYMBOLS.has(itemId)) return false;
-          if (itemId === 'kospi_composite') return false; // KOSPI uses Kiwoom API
-          return true; // Everything else goes to Yahoo Finance (including forex, indices)
-        });
+        const yahooIds = requested;
+        // ↑ Yahoo Finance is the universal fallback. CoinGecko and Kiwoom are
+        //   layered on top below, overwriting the Yahoo entry only when they
+        //   actually return a value, and always keyed by the Twelve Data symbol
+        //   (BTC/USD, ^KS11…) so the mobile client can read it.
 
         let yahooUsed = false;
 
@@ -612,7 +612,8 @@ const server = http.createServer(async (request, response) => {
           }
         }
 
-        // Fetch crypto prices from CoinGecko
+        // Fetch crypto prices from CoinGecko (best source when reachable).
+        // Keyed by the Twelve Data symbol (e.g. BTC/USD) so the client maps it.
         if (cryptoIds.length > 0) {
           try {
             const cryptoPrices = await fetchCached('coingecko:prices', COINGECKO_TTL_MS, 0, fetchCryptoPricesFromCoinGecko);
@@ -620,7 +621,7 @@ const server = http.createServer(async (request, response) => {
               for (const { itemId } of cryptoIds) {
                 const cryptoData = cryptoPrices[itemId];
                 if (cryptoData) {
-                  body[itemId] = cryptoData;
+                  body[TWELVE_DATA_SYMBOLS.get(itemId) || itemId] = cryptoData;
                 }
               }
               yahooUsed = true;
@@ -630,12 +631,13 @@ const server = http.createServer(async (request, response) => {
           }
         }
 
-        // Fetch KOSPI index from Kiwoom API
+        // Fetch KOSPI index from Kiwoom (best source when reachable).
+        // Keyed by the Twelve Data symbol (^KS11) so the client maps it.
         if (kospiIds.length > 0) {
           try {
             const kospiData = await fetchCached('kospi:kiwoom', KIWOOM_TTL_MS, 0, fetchKospiFromKiwoom);
             if (kospiData && kospiData.price) {
-              body['kospi_composite'] = {
+              body[TWELVE_DATA_SYMBOLS.get('kospi_composite') || 'kospi_composite'] = {
                 price: String(kospiData.price),
                 ...(kospiData.previousClose ? { previousClose: String(kospiData.previousClose) } : {}),
                 ...(kospiData.open ? { open: String(kospiData.open) } : {}),
