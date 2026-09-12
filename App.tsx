@@ -15,20 +15,20 @@ import { Header } from './src/components/Header';
 import { SettingsModal } from './src/components/SettingsModal';
 
 import { HomeScreen } from './src/screens/HomeScreen';
-import { KospiScreen } from './src/screens/KospiScreen';
 import { UsMarketScreen } from './src/screens/UsMarketScreen';
 import { MacroScreen } from './src/screens/MacroScreen';
 import { EconomicCalendarScreen } from './src/screens/EconomicCalendarScreen';
-import { AiAnalysisScreen } from './src/screens/AiAnalysisScreen';
 import { NotificationPopup, NotificationPopupData } from './src/components/NotificationPopup';
 
-type TabType = 'overview' | 'kospi' | 'us' | 'macro' | 'events' | 'ai';
+type TabType = 'overview' | 'kospi' | 'us' | 'macro' | 'events';
 
 const AUTO_REFRESH_INTERVAL_MS = 60_000; // 60 seconds
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowBanner: true,
+    // 커스텀 NotificationPopup이 이미 동일 알림을 표시하므로 기본 배너는 숨김 처리
+    // (중복 팝업 방지 — 알림 자체/사운드/목록 표시는 유지)
+    shouldShowBanner: false,
     shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
@@ -247,18 +247,6 @@ function MainApp() {
           />
         )}
 
-        {currentTab === 'kospi' && (
-          <KospiScreen
-            items={items}
-            briefing={briefing}
-            favorites={preferences.favorites}
-            onToggleFavorite={handleToggleFavorite}
-            isRefreshing={isRefreshing}
-            onRefresh={handleRefresh}
-            onGoBack={handleGoBack}
-          />
-        )}
-
         {currentTab === 'us' && (
           <UsMarketScreen
             items={items}
@@ -286,10 +274,6 @@ function MainApp() {
         {currentTab === 'events' && (
           <EconomicCalendarScreen onGoBack={handleGoBack} />
         )}
-
-        {currentTab === 'ai' && (
-          <AiAnalysisScreen onGoBack={handleGoBack} />
-        )}
       </View>
 
       {/* Bottom Tab Bar Navigation */}
@@ -306,36 +290,6 @@ function MainApp() {
           />
           <Text style={[styles.tabLabel, currentTab === 'overview' && styles.tabLabelActive]}>
             모닝 브리핑
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tabItem, currentTab === 'ai' && styles.tabItemActive]}
-          onPress={() => handleTabPress('ai')}
-          activeOpacity={0.8}
-        >
-          <Ionicons
-            name={currentTab === 'ai' ? 'sparkles' : 'sparkles-outline'}
-            size={20}
-            color={currentTab === 'ai' ? Theme.colors.primary : Theme.colors.inactiveTab}
-          />
-          <Text style={[styles.tabLabel, currentTab === 'ai' && styles.tabLabelActive, { color: currentTab === 'ai' ? Theme.colors.primary : Theme.colors.inactiveTab }]}>
-            AI 수급분석
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tabItem, currentTab === 'kospi' && styles.tabItemActive]}
-          onPress={() => handleTabPress('kospi')}
-          activeOpacity={0.8}
-        >
-          <Ionicons
-            name={currentTab === 'kospi' ? 'moon' : 'moon-outline'}
-            size={20}
-            color={currentTab === 'kospi' ? Theme.colors.activeTab : Theme.colors.inactiveTab}
-          />
-          <Text style={[styles.tabLabel, currentTab === 'kospi' && styles.tabLabelActive]}>
-            코스피 야간
           </Text>
         </TouchableOpacity>
 
